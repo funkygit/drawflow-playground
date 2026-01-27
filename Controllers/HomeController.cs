@@ -20,6 +20,11 @@ public class HomeController : Controller
         return View();
     }
 
+    public IActionResult List()
+    {
+        return View();
+    }
+
     [HttpPost]
     public IActionResult SaveWorkflow([FromBody] DrawflowPlayground.Models.WorkflowDefinition workflow)
     {

@@ -36,10 +36,20 @@
             <button class="btn btn-success w-100 mb-2" onclick="runWorkflow()">Run Workflow</button>
             <hr />
             <h4>Nodes</h4>
-            <div class="list-group">
-                <button class="list-group-item list-group-item-action" draggable="true" ondragstart="drag(event)" data-node="start">Start Node</button>
-                <button class="list-group-item list-group-item-action" draggable="true" ondragstart="drag(event)" data-node="action">Action Node</button>
-                <button class="list-group-item list-group-item-action" draggable="true" ondragstart="drag(event)" data-node="end">End Node</button>
+            <div class="drag-drawflow" draggable="true" ondragstart="drag(event)" data-node="start">
+                <i class="fas fa-play"></i><span> Start</span>
+            </div>
+            <div class="drag-drawflow" draggable="true" ondragstart="drag(event)" data-node="action">
+                <i class="fas fa-code-branch"></i><span> Action</span>
+            </div>
+            <div class="drag-drawflow" draggable="true" ondragstart="drag(event)" data-node="delay">
+                <i class="fas fa-clock"></i><span> Delay (2s)</span>
+            </div>
+            <div class="drag-drawflow" draggable="true" ondragstart="drag(event)" data-node="loop">
+                <i class="fas fa-sync"></i><span> Loop</span>
+            </div>
+            <div class="drag-drawflow" draggable="true" ondragstart="drag(event)" data-node="end">
+                <i class="fas fa-stop"></i><span> End</span>
             </div>
             <hr />
             <h4>Log</h4>
@@ -51,3 +61,4 @@
 <script src="https://cdn.jsdelivr.net/gh/jerosoler/Drawflow/dist/drawflow.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
 <script src="/js/workflow-manager.js"></script>
+<script src="/js/index-controller.js"></script>

@@ -17,6 +17,7 @@ namespace DrawflowPlayground.Models
         [BsonId]
         public Guid Id { get; set; }
         public Guid WorkflowId { get; set; }
+        public Guid? ParentExecutionId { get; set; }
         public DateTime StartTime { get; set; }
         public DateTime? EndTime { get; set; }
         public ExecutionStatus Status { get; set; }
@@ -35,6 +36,7 @@ namespace DrawflowPlayground.Models
         public Guid Id { get; set; }
         public Guid ExecutionId { get; set; }
         public string NodeId { get; set; } // Drawflow uses string IDs usually
+        public string NodeType { get; set; }
         public DateTime QueuedAt { get; set; }
         public bool Processed { get; set; }
     }

@@ -22,10 +22,32 @@ namespace DrawflowPlayground.Hubs
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, workflowId);
         }
 
-        public async Task<Guid> StartWorkflow(Guid workflowId)
+        public async Task<Guid> StartWorkflow(Guid workflowId, Guid? parentExecutionId = null)
         {
-            // In a real app, you might want to return the ExecutionId immediately or handle errors
-            return _executionService.StartWorkflow(workflowId);
+            return _executionService.StartWorkflow(workflowId, parentExecutionId);
+        }
+
+        public async Task QueueNode(Guid executionId, string nodeId, string nodeType)
+        {
+            _executionService.QueueNode(executionId, nodeId, nodeType);
+        }
+
+        public async Task PauseExecution(Guid executionId)
+        {
+            _executionService.PauseExecution(executionId);
+             await Clients.Group(executionId.ToString()).SendAsync("ExecutionPaused", executionId);
+        }
+
+        public async Task ResumeExecution(Guid executionId)
+        {
+            _executionService.ResumeExecution(executionId);
+             await Clients.Group(executionId.ToString()).SendAsync("ExecutionResumed", executionId);
+        }
+
+        public async Task AbortExecution(Guid executionId)
+        {
+            _executionService.AbortExecution(executionId);
+             await Clients.Group(executionId.ToString()).SendAsync("ExecutionAborted", executionId);
         }
     }
 }

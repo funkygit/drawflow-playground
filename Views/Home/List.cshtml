@@ -1,0 +1,203 @@
+@{
+    ViewData["Title"] = "Workflow List";
+}
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jerosoler/Drawflow/dist/drawflow.min.css">
+<style>
+    .workflow-card {
+        border: 1px solid #ddd;
+        margin-bottom: 20px;
+        padding: 10px;
+        border-radius: 5px;
+    }
+    .drawflow-readonly {
+        width: 100%;
+        height: 300px;
+        border: 1px solid #eee;
+        position: relative;
+    }
+    .node-status {
+        position: absolute;
+        top: -10px;
+        right: -10px;
+        width: 15px;
+        height: 15px;
+        border-radius: 50%;
+        background-color: gray;
+        border: 1px solid white;
+    }
+    .status-running { background-color: yellow; }
+    .status-completed { background-color: green; }
+    .status-failed { background-color: red; }
+</style>
+
+<div class="container">
+    <h2>All Workflows</h2>
+    <div id="workflow-list"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/gh/jerosoler/Drawflow/dist/drawflow.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+
+<script src="/js/workflow-manager.js"></script>
+<script>
+    const connection = new signalR.HubConnectionBuilder()
+        .withUrl("/workflowHub")
+        .build();
+
+    async function loadWorkflows() {
+        const res = await fetch('/Home/GetWorkflows');
+        const workflows = await res.json();
+        const container = document.getElementById('workflow-list');
+
+        workflows.forEach(wf => {
+            const card = document.createElement('div');
+            card.className = 'workflow-card';
+            card.innerHTML = `
+                <h4>${wf.name || 'Untitled'} (${wf.id})</h4>
+                <div class="d-flex gap-2 mb-2">
+                    <button class="btn btn-primary btn-sm" onclick="startWorkflow('${wf.id}', this)">Run</button>
+                    <button class="btn btn-warning btn-sm" onclick="controlExecution('${wf.id}', 'pause')">Pause</button>
+                    <button class="btn btn-success btn-sm" onclick="controlExecution('${wf.id}', 'resume')">Resume</button>
+                    <button class="btn btn-danger btn-sm" onclick="controlExecution('${wf.id}', 'abort')">Abort</button>
+                    <span id="status-${wf.id}" class="ms-2 fw-bold">Ready</span>
+                </div>
+                <div id="drawflow-${wf.id}" class="drawflow-readonly"></div>
+            `;
+            container.appendChild(card);
+
+            const editor = new Drawflow(document.getElementById(`drawflow-${wf.id}`));
+            editor.reroute = true;
+            editor.editor_mode = 'fixed'; // Readonly
+            editor.start();
+            try {
+                const data = JSON.parse(wf.jsonData);
+                editor.import(data);
+            } catch(e) { console.error("JSON Error", e); }
+            
+            // store reference
+            wf.editor = editor;
+            wf.activeExecutionId = null;
+            wf.executor = null;
+        });
+        window.workflows = workflows; // Global access
+    }
+
+    async function startWorkflow(workflowId, btn) {
+        // Find workflow obj
+        const wf = window.workflows.find(w => w.id === workflowId);
+        if(!wf) return;
+
+        // Reset Vis
+        document.getElementById(`drawflow-${workflowId}`).querySelectorAll('.node-status').forEach(e => e.remove());
+        
+        try {
+            const executionId = await connection.invoke("StartWorkflow", workflowId, null);
+            wf.activeExecutionId = executionId;
+            document.getElementById(`status-${workflowId}`).innerText = `Running (${executionId})`;
+            
+            await connection.invoke("JoinWorkflowGroup", executionId);
+            
+            // Init Executor with Chain Callback
+            const onChain = async (newExecId) => {
+                 wf.activeExecutionId = newExecId;
+                 document.getElementById(`status-${workflowId}`).innerText = `Running (Loop: ${newExecId})`;
+                 await connection.invoke("JoinWorkflowGroup", newExecId);
+                 // Reset visuals for new loop
+                 const container = document.getElementById(`drawflow-${wf.id}`);
+                 container.querySelectorAll('.node-status').forEach(e => e.remove());
+                 
+                 // Re-init executor for new context
+                 wf.executor = new WorkflowExecutor(wf.editor, connection, newExecId, wf.id, onChain);
+                 await wf.executor.start();
+            };
+
+            wf.executor = new WorkflowExecutor(wf.editor, connection, executionId, wf.id, onChain);
+            await wf.executor.start();
+            
+        } catch(e) {
+            console.error(e);
+            alert("Error starting workflow");
+        }
+    }
+    
+    async function controlExecution(workflowId, action) {
+        const wf = window.workflows.find(w => w.id === workflowId);
+        if(!wf || !wf.activeExecutionId) {
+             alert("No active execution");
+             return;
+        }
+        
+        const execId = wf.activeExecutionId;
+        if(action === 'pause') await connection.invoke("PauseExecution", execId);
+        if(action === 'resume') await connection.invoke("ResumeExecution", execId);
+        if(action === 'abort') await connection.invoke("AbortExecution", execId);
+    }
+
+    // LISTENER LOGIC
+    connection.on("NodeStatusChanged", (executionId, nodeId, status) => {
+         // Check if this execution belongs to a known workflow (Active Exec)
+         // OR if it's a CHILD execution of a known workflow.
+         // We only track `wf.activeExecutionId`. If loops create NEW IDs, our UI won't update for the new loop!
+         // We need to detect if `executionId` is a child of `wf.activeExecutionId`? 
+         // Realistically, for this MVP, we should just Switch the View to the new Execution ID if we detect it's related?
+         // Or simpler: The Backend sends `NodeStatusChanged` to group `ParentExecutionId` too? No.
+         // The Client `handleNodeCompletion` triggers `StartWorkflow`. User gets a NEW Execution ID.
+         // How does the UI know?
+         // We need a `ExecutionStarted(Link)` event?
+         // Let's depend on manual refresh or a new event?
+         // BETTER: When `StartWorkflow` is called from Loop, the *Frontend* called it. 
+         // But `WorkflowExecutor` called it. The UI wrapper (List.cshtml) doesn't know.
+         // FIX: `WorkflowExecutor` should probably emit an event or callback.
+         // For MVP: I will update `WorkflowExecutor` to accept a callback `onExecutionRestart`.
+         
+         const wf = window.workflows.find(w => w.activeExecutionId === executionId);
+         
+         if(wf && wf.executor) {
+             updateNodeStatus(wf, nodeId, status);
+             
+             if(status === "Completed") {
+                 wf.executor.handleNodeCompletion(nodeId);
+             }
+         }
+    });
+
+    // We need to listen for when a LOOP triggers a new execution so we can update the UI to follow it.
+    // Since `WorkflowExecutor` invokes `StartWorkflow`, we can listen to the result?
+    // But `invoke` returns a Promise. `handleNodeCompletion` awaits it.
+    // If we want the UI to update `wf.activeExecutionId`, we need a way to bubble that up.
+    // Let's add `onChainExecution` callback to Executor.
+    
+    connection.on("ExecutionPaused", (id) => updateStatusByExecId(id, "Paused"));
+    connection.on("ExecutionResumed", (id) => updateStatusByExecId(id, "Resumed"));
+    connection.on("ExecutionAborted", (id) => updateStatusByExecId(id, "Aborted"));
+
+    function updateStatusByExecId(execId, statusText) {
+        const wf = window.workflows.find(w => w.activeExecutionId == execId);
+        if(wf) {
+            document.getElementById(`status-${wf.id}`).innerText = `${statusText} (${execId})`;
+        }
+    }
+
+    function updateNodeStatus(wf, nodeId, status) {
+        // Visuals
+        const container = document.getElementById(`drawflow-${wf.id}`);
+        // Use attribute selector to find ID within this container, ignoring duplicates elsewhere
+        const nodeEl = container.querySelector(`[id="node-${nodeId}"]`);
+        
+        if (nodeEl) {
+            let badge = nodeEl.querySelector('.node-status');
+            if (!badge) {
+                badge = document.createElement('div');
+                badge.className = 'node-status';
+                nodeEl.appendChild(badge);
+            }
+            badge.className = `node-status status-${status.toLowerCase()}`;
+        }
+    }
+
+    connection.start().then(() => {
+        console.log("Connected");
+        loadWorkflows();
+    });
+</script>
