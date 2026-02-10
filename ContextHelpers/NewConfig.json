@@ -1,0 +1,150 @@
+[
+    {
+        "NodeKey": "tcp_server",
+        "DisplayName": "TCP Server",
+        "ExecutionMode": "LongRunning",
+        "DllPath": "MyTcpServer.dll",
+        "TypeName": "MyTcpServer.Implements.TcpServer",
+        "Lifecycle": {
+            "OnStart": {
+                "MethodName": "Start",
+                "Parameters": [
+                    {
+                        "Name": "protocol",
+                        "Order": 1,
+                        "DataType": "System.String",
+                        "AllowedValues": [
+                            "TCP",
+                            "UDP"
+                        ],
+                        "IsRequired": {
+                            "Type": "Static",
+                            "Value": true
+                        },
+                        "Source": "UserInput"
+                    },
+                    {
+                        "Name": "port",
+                        "Order": 2,
+                        "DataType": "System.Int32",
+                        "IsRequired": {
+                            "Type": "Static",
+                            "Value": true
+                        },
+                        "Source": "UserInput"
+                    },
+                    {
+                        "Name": "path",
+                        "Order": 3,
+                        "DataType": "System.String",
+                        "IsRequired": {
+                            "Type": "Conditional",
+                            "Condition": {
+                                "Operator": "Equals",
+                                "Left": {
+                                    "Source": "Parameter",
+                                    "Name": "protocol"
+                                },
+                                "Right": {
+                                    "Value": "TCP"
+                                }
+                            }
+                        },
+                        "Source": "UserInput"
+                    }
+                ]
+            },
+            "OnEvent": {
+                "MethodName": "OnMessage",
+                "Parameters": [
+                    {
+                        "Name": "message",
+                        "Source": "RuntimeEvent"
+                    }
+                ],
+                "Emits": [
+                    "MessageReceived"
+                ]
+            },
+            "OnStop": {
+                "MethodName": "Stop"
+            }
+        },
+        "Outputs": [
+            {
+                "Name": "Message",
+                "DataType": "System.String",
+                "ProducedOn": "Event:MessageReceived"
+            },
+            {
+                "Name": "RemoteEndPoint",
+                "DataType": "System.String",
+                "ProducedOn": "Event:MessageReceived"
+            },
+            {
+                "Name": "Error",
+                "DataType": "System.String",
+                "ProducedOn": "Failure"
+            }
+        ]
+    },
+    {
+        "NodeKey": "send_email",
+        "DisplayName": "Send Email",
+        "ExecutionMode": "Transient",
+        "DllPath": "EmailManager.dll",
+        "TypeName": "EmailManager.Implements.EmailSender",
+        "ExecutionFlow": [
+            {
+                "Sequence": 1,
+                "MethodName": "Init",
+                "Parameters": [
+                    {
+                        "Name": "mail_server_url",
+                        "DataType": "System.String",
+                        "Source": "UserInput"
+                    },
+                    {
+                        "Name": "auth_token",
+                        "DataType": "System.String",
+                        "Source": "UserInput"
+                    }
+                ]
+            },
+            {
+                "Sequence": 2,
+                "MethodName": "SendEmail",
+                "Parameters": [
+                    {
+                        "Name": "to",
+                        "DataType": "System.String",
+                        "Source": "UserInput"
+                    },
+                    {
+                        "Name": "subject",
+                        "DataType": "System.String",
+                        "Source": "UserInput"
+                    },
+                    {
+                        "Name": "body",
+                        "DataType": "System.String",
+                        "Source": "NodeOutput"
+                    }
+                ]
+            }
+        ],
+        "Outputs": [
+            {
+                "Name": "Status",
+                "DataType": "System.Boolean",
+                "Description": "If the email was sent successfully",
+                "ProducedOn": "Success"
+            },
+            {
+                "Name": "Error",
+                "DataType": "System.String",
+                "ProducedOn": "Failure"
+            }
+        ]
+    }
+]

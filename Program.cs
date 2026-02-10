@@ -6,6 +6,7 @@ builder.Services.AddSignalR();
 builder.Services.AddSingleton<DrawflowPlayground.Services.LiteDbContext>();
 builder.Services.AddSingleton<DrawflowPlayground.Services.WorkflowExecutionService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DrawflowPlayground.Services.WorkflowExecutionService>());
+builder.Services.AddSingleton<DrawflowPlayground.Utilities.IDynamicExecutor, DrawflowPlayground.Utilities.DynamicExecutor>();
 
 var app = builder.Build();
 

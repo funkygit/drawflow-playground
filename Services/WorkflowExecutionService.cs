@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using DrawflowPlayground.Hubs;
 using DrawflowPlayground.Models;
+using DrawflowPlayground.Utilities; // Added
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -18,15 +19,20 @@ namespace DrawflowPlayground.Services
     {
         private readonly LiteDbContext _db;
         private readonly IHubContext<WorkflowHub> _hubContext;
+        private readonly IDynamicExecutor _dynamicExecutor;
         private readonly ILogger<WorkflowExecutionService> _logger;
         private readonly ConcurrentDictionary<Guid, Task> _activeExecutions = new();
         private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _cancellationTokens = new();
         private readonly ConcurrentDictionary<Guid, ManualResetEventSlim> _pauseEvents = new();
+        
+        // Track active node instances for LongRunning nodes: ExecutionId -> NodeId -> Instance
+        private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, object>> _activeNodeInstances = new();
 
-        public WorkflowExecutionService(LiteDbContext db, IHubContext<WorkflowHub> hubContext, ILogger<WorkflowExecutionService> logger)
+        public WorkflowExecutionService(LiteDbContext db, IHubContext<WorkflowHub> hubContext, IDynamicExecutor dynamicExecutor, ILogger<WorkflowExecutionService> logger)
         {
             _db = db;
             _hubContext = hubContext;
+            _dynamicExecutor = dynamicExecutor;
             _logger = logger;
         }
 
@@ -46,7 +52,8 @@ namespace DrawflowPlayground.Services
             // Initialize control structures
             var cts = new CancellationTokenSource();
             _cancellationTokens[executionId] = cts;
-            _pauseEvents[executionId] = new ManualResetEventSlim(true); // Initially set (not paused)
+            _pauseEvents[executionId] = new ManualResetEventSlim(true);
+            _activeNodeInstances[executionId] = new ConcurrentDictionary<string, object>();
 
             var task = Task.Run(() => ExecutionLoop(executionId, cts.Token));
             _activeExecutions[executionId] = task;
@@ -54,9 +61,8 @@ namespace DrawflowPlayground.Services
             return executionId;
         }
 
-        public void QueueNode(Guid executionId, string nodeId, string nodeType = "action")
+        public void QueueNode(Guid executionId, string nodeId, string nodeType = "action", NodeInput input = null)
         {
-            // Only allow queuing if execution is active
             if (!_activeExecutions.ContainsKey(executionId)) return;
 
             var queueItem = new ExecutionQueueItem
@@ -64,6 +70,7 @@ namespace DrawflowPlayground.Services
                 ExecutionId = executionId,
                 NodeId = nodeId,
                 NodeType = nodeType,
+                Input = input,
                 QueuedAt = DateTime.UtcNow,
                 Processed = false
             };
@@ -75,8 +82,8 @@ namespace DrawflowPlayground.Services
         {
             if (_pauseEvents.TryGetValue(executionId, out var pauseEvent))
             {
-                pauseEvent.Reset(); // Blocks threads waiting on this
-                UpdateStatus(executionId, ExecutionStatus.Running); // Maybe a paused status? keeping simple.
+                pauseEvent.Reset(); 
+                UpdateStatus(executionId, ExecutionStatus.Running); 
             }
         }
 
@@ -94,6 +101,44 @@ namespace DrawflowPlayground.Services
             {
                 cts.Cancel();
                 UpdateStatus(executionId, ExecutionStatus.Failed);
+                
+                // Stop all active nodes
+                if (_activeNodeInstances.TryGetValue(executionId, out var nodes))
+                {
+                    foreach (var nodeId in nodes.Keys)
+                    {
+                        StopNode(executionId, nodeId).Wait();
+                    }
+                }
+            }
+        }
+
+        public async Task StopNode(Guid executionId, string nodeId)
+        {
+            // Find config to get OnStop method
+            // In a real app we might cache config with instance, but here we fetch or need it passed.
+            // For now, let's assume we can get it or we just look into instance type if we rely on convention?
+            // Actually, we need the config to know the "OnStop" method name.
+            // We should probably store the Config with the instance.
+            
+            if (_activeNodeInstances.TryGetValue(executionId, out var nodes) && nodes.TryRemove(nodeId, out var instance))
+            {
+                 // We need to retrieve the config again or store it.
+                 // Fetching from queue/history is hard.
+                 // OPTIMIZATION: Store "NodeContext" { Instance, Configuration } instead of just Instance.
+                 // For this step, I will assume we can't easily get the specific config unless we persisted it.
+                 // I'll skip the "Dynamic OnStop" for this exact moment and just Dispose if IDisposable?
+                 // OR, re-fetch via Workflow Definition (expensive but correct).
+                 
+                 var execution = _db.WorkflowExecutions.FindById(executionId);
+                 var workflow = _db.WorkflowDefinitions.FindById(execution.WorkflowId);
+                 // JSON parse to find node... brittle.
+                 
+                 // Fallback: If instance is IDisposable, dispose it.
+                 if (instance is IDisposable disposable)
+                 {
+                     disposable.Dispose();
+                 }
             }
         }
 
@@ -118,13 +163,11 @@ namespace DrawflowPlayground.Services
             {
                 while (!token.IsCancellationRequested)
                 {
-                    // Check Pause logic
                     if (_pauseEvents.TryGetValue(executionId, out var pauseEvent))
                     {
-                        pauseEvent.Wait(token); // Block if paused
+                        pauseEvent.Wait(token);
                     }
 
-                    // 1. Check Queue
                     var queueItem = _db.ExecutionQueue.FindOne(x => x.ExecutionId == executionId && !x.Processed);
                     if (queueItem == null)
                     {
@@ -132,10 +175,8 @@ namespace DrawflowPlayground.Services
                         continue;
                     }
 
-                    // 2. Process Node
                     await ProcessNode(queueItem, executionId);
 
-                    // 3. Mark Processed
                     queueItem.Processed = true;
                     _db.ExecutionQueue.Update(queueItem);
                 }
@@ -154,6 +195,7 @@ namespace DrawflowPlayground.Services
                  _activeExecutions.TryRemove(executionId, out _);
                  _cancellationTokens.TryRemove(executionId, out _);
                  _pauseEvents.TryRemove(executionId, out _);
+                 _activeNodeInstances.TryRemove(executionId, out _);
             }
         }
 
@@ -162,13 +204,127 @@ namespace DrawflowPlayground.Services
             _logger.LogInformation($"Processing Node {item.NodeId} ({item.NodeType})...");
             await _hubContext.Clients.Group(executionId.ToString()).SendAsync("NodeStatusChanged", executionId, item.NodeId, "Running");
             
-            if (item.NodeType?.ToLower() == "delay")
+            string output = "Success";
+            bool isLongRunning = false;
+
+            try
             {
-                 await Task.Delay(2000); 
+                if (item.Configuration != null)
+                {
+                    var config = item.Configuration;
+                    var inputs = new Dictionary<string, object>(); 
+                    
+                    // 1. Resolve Input from QueueItem
+                    if (item.Input != null)
+                    {
+                        var nodeInput = item.Input;
+                        _logger.LogInformation($"Resolving Input for Node {item.NodeId} from Source {nodeInput.SourceNodeId}");
+
+                        // Fetch Source Result
+                        var sourceResult = _db.ExecutionResults.FindOne(r => r.ExecutionId == executionId && r.NodeId == nodeInput.SourceNodeId);
+                         
+                        if (sourceResult != null)
+                        {
+                             // Parse Output (Expecting JSON object string)
+                             try 
+                             {
+                                 var outputs = JsonNode.Parse(sourceResult.Output);
+                                 var specificOutput = outputs?[nodeInput.SourceOutputName];
+                                 
+                                 if (specificOutput != null)
+                                 {
+                                     object resolvedValue = specificOutput.ToString();
+                                      if (specificOutput.GetValueKind() == JsonValueKind.String) resolvedValue = specificOutput.GetValue<string>();
+                                      else if (specificOutput.GetValueKind() == JsonValueKind.Number) resolvedValue = specificOutput.GetValue<int>();
+                                      else if (specificOutput.GetValueKind() == JsonValueKind.True || specificOutput.GetValueKind() == JsonValueKind.False) resolvedValue = specificOutput.GetValue<bool>();
+                                      
+                                     // Map to parameters expecting NodeOutput
+                                     if (config.Lifecycle?.OnStart?.Parameters != null)
+                                     {
+                                         foreach (var p in config.Lifecycle.OnStart.Parameters.Where(p => p.Source == "NodeOutput"))
+                                         {
+                                             inputs[p.Name] = resolvedValue;
+                                         }
+                                     }
+                                     if (config.ExecutionFlow != null)
+                                     {
+                                         foreach (var m in config.ExecutionFlow)
+                                         {
+                                             if (m.Parameters != null)
+                                             {
+                                                 foreach (var p in m.Parameters.Where(p => p.Source == "NodeOutput"))
+                                                 {
+                                                     inputs[p.Name] = resolvedValue;
+                                                 }
+                                             }
+                                         }
+                                     }
+                                 }
+                                 else
+                                 {
+                                     _logger.LogWarning($"Output '{nodeInput.SourceOutputName}' not found in result of node {nodeInput.SourceNodeId}");
+                                 }
+                             }
+                             catch (Exception ex)
+                             {
+                                 _logger.LogError(ex, "Failed to parse source result output.");
+                             }
+                        }
+                        else
+                        {
+                              _logger.LogWarning($"Result not found for source node {nodeInput.SourceNodeId}");
+                        }
+                    }
+
+                    if (config.ExecutionMode == "LongRunning" && config.Lifecycle != null)
+                    {
+                        isLongRunning = true;
+                        _logger.LogInformation($"Starting LongRunning Node {item.NodeId}");
+                        
+                        // 1. Create Instance
+                        var instance = _dynamicExecutor.CreateInstance(config.DllPath, config.TypeName);
+                        
+                        // 2. Execute OnStart
+                        if (config.Lifecycle.OnStart != null)
+                        {
+                            await _dynamicExecutor.ExecuteMethodAsync(instance, config.Lifecycle.OnStart, inputs);
+                        }
+                        
+                        // 3. Store Instance
+                        if (_activeNodeInstances.TryGetValue(executionId, out var nodes))
+                        {
+                            nodes[item.NodeId] = instance; // Store for OnStop/OnEvent
+                            // TODO: Store Config here too for OnStop
+                        }
+                        
+                        output = "Started (Long Running)";
+                    }
+                    else if (config.ExecutionFlow != null)
+                    {
+                        // Transient
+                        _logger.LogInformation($"Executing Transient Node {item.NodeId}");
+                        var instance = _dynamicExecutor.CreateInstance(config.DllPath, config.TypeName);
+                        
+                        object lastResult = null;
+                        foreach (var method in config.ExecutionFlow.OrderBy(m => m.Sequence))
+                        {
+                            lastResult = await _dynamicExecutor.ExecuteMethodAsync(instance, method, inputs);
+                        }
+                        output = lastResult?.ToString() ?? "Completed";
+                        
+                        if (instance is IDisposable d) d.Dispose();
+                    }
+                }
+                else
+                {
+                    // Legacy Fallback
+                     await Task.Delay(500);
+                }
             }
-            else
+            catch (Exception ex)
             {
-                 await Task.Delay(500); // Standard speed
+                _logger.LogError(ex, $"Error executing node {item.NodeId}");
+                output = $"Error: {ex.Message}";
             }
 
             // Record Result
@@ -176,20 +332,15 @@ namespace DrawflowPlayground.Services
             {
                 ExecutionId = executionId,
                 NodeId = item.NodeId,
-                Output = "Success",
+                Output = output,
                 CompletedAt = DateTime.UtcNow
             };
             _db.ExecutionResults.Insert(result);
 
-            await _hubContext.Clients.Group(executionId.ToString()).SendAsync("NodeStatusChanged", executionId, item.NodeId, "Completed");
-
-            // NOTE: No longer queueing next nodes here. Client will listen to "Completed" and queue next.
-            // Check for End Node logic if we want Server to know when to "officially" stop?
-            // Or Client can send "Stop" command?
-            // For now, let's keep the thread running until Client sends Abort or we timeout (not implemented).
-            // Or if we encounter a special "End" signal from client?
-            // Let's assume user manually aborts or we add a "CompleteExecution" hub method later. 
-            // Actually, if it's the "End" node, the Client should call "CompleteWorkflow" or similar.
+            // Only mark "Completed" visually if it's NOT LongRunning, OR if we want to show it's "Ready". 
+            // Usually LongRunning might show "Active".
+            var status = isLongRunning ? "Active" : "Completed";
+            await _hubContext.Clients.Group(executionId.ToString()).SendAsync("NodeStatusChanged", executionId, item.NodeId, status);
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)

@@ -2,3 +2,5 @@ obj/
 bin/
 .vs/
 *.db
+WorkflowData-log.db
+WorkflowData.db

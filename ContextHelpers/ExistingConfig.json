@@ -1,0 +1,25 @@
+[
+    {
+        "NodeKey": "tcp_Server",
+        "DisplayName": "TCP Server",
+        "DllPath": "MyTcpServer.dll",
+        "TypeName": "MyTcpServer.Implements.TcpServer",
+        "MethodName": "StartAsync",
+        "Parameters": [
+            {
+                "Name": "port",
+                "Order": 1,
+                "DataType": "System.Int32",
+                "IsRequired": true,
+                "Source": "UserInput"
+            },
+            {
+                "Name": "port",
+                "Order": 2,
+                "DataType": "System.Int32",
+                "IsRequired": false,
+                "Source": "UserInput"
+            }
+        ]
+    }
+]
