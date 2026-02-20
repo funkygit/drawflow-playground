@@ -30,7 +30,11 @@ namespace DrawflowPlayground.Utilities
                 object val = null;
 
                 // 1. Retrieve Value
-                if (uiInputs.TryGetValue(param.Name, out var inputVal))
+                if (param.Source == "Constant")
+                {
+                    val = param.Value;
+                }
+                else if (uiInputs.TryGetValue(param.Name, out var inputVal))
                 {
                     val = inputVal;
                 }

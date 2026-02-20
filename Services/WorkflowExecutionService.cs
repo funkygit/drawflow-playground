@@ -61,21 +61,130 @@ namespace DrawflowPlayground.Services
             return executionId;
         }
 
+        private List<NodeConfiguration> _masterConfigs;
+
+        private void LoadMasterConfigs()
+        {
+            try
+            {
+                var path = Path.Combine(Directory.GetCurrentDirectory(), "ContextHelpers", "auto-generated.json");
+                if (System.IO.File.Exists(path))
+                {
+                    var json = System.IO.File.ReadAllText(path);
+                    _masterConfigs = JsonSerializer.Deserialize<List<NodeConfiguration>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to load master configs.");
+            }
+        }
+
         public void QueueNode(Guid executionId, string nodeId, string nodeType = "action", NodeInput input = null)
         {
             if (!_activeExecutions.ContainsKey(executionId)) return;
+            if (_masterConfigs == null) LoadMasterConfigs();
+
+            var execution = _db.WorkflowExecutions.FindById(executionId);
+            var workflow = _db.WorkflowDefinitions.FindById(execution.WorkflowId);
+            
+            NodeConfiguration config = null;
+
+            if (workflow != null && !string.IsNullOrEmpty(workflow.JsonData))
+            {
+                try {
+                    var doc = JsonNode.Parse(workflow.JsonData);
+                    var nodeData = doc?["drawflow"]?["Home"]?["data"]?[nodeId];
+                    var data = nodeData?["data"];
+                    
+                    if (data != null) {
+                        var nodeKey = data["nodeKey"]?.ToString();
+                        var selectedVariant = data["selectedVariant"]?.ToString();
+                        var parameters = data["parameters"]?.AsObject();
+
+                        var master = _masterConfigs?.FirstOrDefault(m => m.NodeKey == nodeKey);
+                        if (master != null) {
+                            // Clone master config to avoid mutations
+                            config = JsonSerializer.Deserialize<NodeConfiguration>(JsonSerializer.Serialize(master));
+                            
+                            // Apply User Parameters to the config (Source: USER_INPUT/CONSTANT)
+                            ApplyUserParameters(config, selectedVariant, parameters);
+                        }
+                    }
+                } catch (Exception ex) {
+                    _logger.LogError(ex, $"Error parsing workflow JSON for node {nodeId}");
+                }
+            }
 
             var queueItem = new ExecutionQueueItem
             {
                 ExecutionId = executionId,
                 NodeId = nodeId,
                 NodeType = nodeType,
+                Configuration = config,
                 Input = input,
                 QueuedAt = DateTime.UtcNow,
                 Processed = false
             };
             _db.ExecutionQueue.Insert(queueItem);
              _logger.LogInformation($"Queued Node {nodeId} ({nodeType}) for Execution {executionId}");
+        }
+
+        private void ApplyUserParameters(NodeConfiguration config, string selectedVariant, JsonObject parameters)
+        {
+            // 1. Set the Variant Discriminator
+            if (!string.IsNullOrEmpty(config.VariantSource) && !string.IsNullOrEmpty(selectedVariant))
+            {
+                // Inject the discriminator value into a dummy parameter or just ensure it's in the data
+                // For simplicity, we'll make sure it's accessible in the inputs dict later.
+                // We can add it as a constant parameter to the config root.
+                
+                // Track where to inject it (Constructor or Methods)
+                // But wait, the resolution happens in ProcessNode. 
+                // We just need to make sure ProcessNode knows about 'selectedVariant'.
+                
+                // We'll use a hacky way: add a parameter to the config that holds this value.
+                if (config.Constructor == null) config.Constructor = new MethodDefinition { Parameters = new List<NodeParameter>() };
+                if (config.Constructor.Parameters == null) config.Constructor.Parameters = new List<NodeParameter>();
+                
+                if (!config.Constructor.Parameters.Any(p => p.Name == config.VariantSource))
+                {
+                    config.Constructor.Parameters.Add(new NodeParameter { 
+                        Name = config.VariantSource, 
+                        Source = "Constant", 
+                        Value = selectedVariant 
+                    });
+                }
+            }
+
+            // 2. Inject other parameters from the UI
+            if (parameters != null)
+            {
+                foreach (var kvp in parameters)
+                {
+                    var paramName = kvp.Key;
+                    var paramValue = kvp.Value?.ToString();
+
+                    // Find this parameter in the config (Constructor or Flow) and update its value
+                    UpdateParameterValue(config.Constructor?.Parameters, paramName, paramValue);
+                    if (config.ExecutionFlow != null)
+                    {
+                        foreach (var m in config.ExecutionFlow)
+                            UpdateParameterValue(m.Parameters, paramName, paramValue);
+                    }
+                }
+            }
+        }
+
+        private void UpdateParameterValue(List<NodeParameter> parameters, string name, string value)
+        {
+            if (parameters == null) return;
+            var p = parameters.FirstOrDefault(x => x.Name == name);
+            if (p != null)
+            {
+                p.Value = value;
+                p.Source = "Constant"; // Treat as constant once resolved from UI
+            }
         }
 
         public void PauseExecution(Guid executionId)
@@ -213,6 +322,24 @@ namespace DrawflowPlayground.Services
                 {
                     var config = item.Configuration;
                     var inputs = new Dictionary<string, object>(); 
+
+                    // 0. Initialize Inputs from Configuration Constants (Resolved during QueueNode)
+                    if (config.Constructor?.Parameters != null)
+                    {
+                        foreach (var p in config.Constructor.Parameters.Where(p => p.Source == "Constant"))
+                            inputs[p.Name] = p.Value;
+                    }
+                    if (config.ExecutionFlow != null)
+                    {
+                        foreach (var m in config.ExecutionFlow)
+                        {
+                            if (m.Parameters != null)
+                            {
+                                foreach (var p in m.Parameters.Where(p => p.Source == "Constant"))
+                                    inputs[p.Name] = p.Value;
+                            }
+                        }
+                    }
                     
                     // 1. Resolve Input from QueueItem
                     if (item.Input != null)
@@ -276,13 +403,34 @@ namespace DrawflowPlayground.Services
                         }
                     }
 
+                    // 2. Resolve Variant (New Logic)
+                    if (!string.IsNullOrEmpty(config.VariantSource) && config.Variants != null)
+                    {
+                        if (inputs.TryGetValue(config.VariantSource, out var variantValue))
+                        {
+                            var variant = config.Variants.FirstOrDefault(v => v.Value == variantValue?.ToString());
+                            if (variant != null)
+                            {
+                                _logger.LogInformation($"Applying Variant: {variant.Label} ({variant.Value})");
+                                if (!string.IsNullOrEmpty(variant.TypeName)) config.TypeName = variant.TypeName;
+                                if (variant.Constructor != null) config.Constructor = variant.Constructor;
+                                if (variant.ExecutionFlow != null) config.ExecutionFlow = variant.ExecutionFlow;
+                                if (variant.Outputs != null) config.Outputs = variant.Outputs;
+                            }
+                            else
+                            {
+                                _logger.LogWarning($"Variant not found for value '{variantValue}' (Source: {config.VariantSource})");
+                            }
+                        }
+                    }
+
                     if (config.ExecutionMode == "LongRunning" && config.Lifecycle != null)
                     {
                         isLongRunning = true;
                         _logger.LogInformation($"Starting LongRunning Node {item.NodeId}");
                         
                         // 1. Create Instance
-                        var instance = _dynamicExecutor.CreateInstance(config.DllPath, config.TypeName);
+                        var instance = _dynamicExecutor.CreateInstance(config.DllPath, config.TypeName, config.Constructor, inputs);
                         
                         // 2. Execute OnStart
                         if (config.Lifecycle.OnStart != null)
@@ -303,7 +451,7 @@ namespace DrawflowPlayground.Services
                     {
                         // Transient
                         _logger.LogInformation($"Executing Transient Node {item.NodeId}");
-                        var instance = _dynamicExecutor.CreateInstance(config.DllPath, config.TypeName);
+                        var instance = _dynamicExecutor.CreateInstance(config.DllPath, config.TypeName, config.Constructor, inputs);
                         
                         object lastResult = null;
                         foreach (var method in config.ExecutionFlow.OrderBy(m => m.Sequence))

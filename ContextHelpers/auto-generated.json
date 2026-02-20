@@ -1,0 +1,80 @@
+[
+    {
+        "NodeKey": "multi_provider_storage",
+        "DisplayName": "Cloud Storage Node",
+        "NodeType": "Processing",
+        "NodeTypeKey": "processing",
+        "NodeTypeOrder": 3,
+        "ExecutionMode": "Transient",
+        "DllPath": "External/CloudStorageProvider.dll",
+        "VariantSource": "Provider",
+        "Variants": [
+            {
+                "Value": "AWS",
+                "Label": "Amazon Web Services (S3)",
+                "TypeName": "Amazon.S3.S3Client",
+                "Constructor": {
+                    "Parameters": [
+                        {
+                            "Name": "accessKey",
+                            "DisplayName": "AWS Access Key",
+                            "Order": 1,
+                            "DataType": "System.String",
+                            "Source": "USER_INPUT",
+                            "Value": "AKIA..."
+                        },
+                        {
+                            "Name": "secretKey",
+                            "DisplayName": "AWS Secret Key",
+                            "Order": 2,
+                            "DataType": "System.String",
+                            "Source": "USER_INPUT",
+                            "Value": "SECRET..."
+                        }
+                    ]
+                },
+                "ExecutionFlow": [
+                    {
+                        "Sequence": 1,
+                        "MethodName": "PutObjectAsync"
+                    }
+                ],
+                "Outputs": [
+                    {
+                        "Name": "S3Url",
+                        "DataType": "System.String"
+                    }
+                ]
+            },
+            {
+                "Value": "Azure",
+                "Label": "Azure Blob Storage",
+                "TypeName": "Azure.Storage.Blobs.BlobClient",
+                "Constructor": {
+                    "Parameters": [
+                        {
+                            "Name": "connectionString",
+                            "DisplayName": "Azure Connection String",
+                            "Order": 1,
+                            "DataType": "System.String",
+                            "Source": "USER_INPUT",
+                            "Value": "DefaultEndpointsProtocol=..."
+                        }
+                    ]
+                },
+                "ExecutionFlow": [
+                    {
+                        "Sequence": 1,
+                        "MethodName": "UploadAsync"
+                    }
+                ],
+                "Outputs": [
+                    {
+                        "Name": "BlobUri",
+                        "DataType": "System.String"
+                    }
+                ]
+            }
+        ]
+    }
+]

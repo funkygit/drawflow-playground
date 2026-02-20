@@ -47,16 +47,35 @@ namespace DrawflowPlayground.Models
     {
         public string NodeKey { get; set; }
         public string DisplayName { get; set; }
+        public string NodeType { get; set; } // "Input", "Processing", "Output"
+        public string NodeTypeKey { get; set; } // "input", "processing", "output"
+        public int NodeTypeOrder { get; set; } // 1, 2, 3...
         public string ExecutionMode { get; set; } // "LongRunning" or "Transient"
         public string DllPath { get; set; }
         public string TypeName { get; set; }
         
+        public MethodDefinition Constructor { get; set; }
+
+        // For Variant-Based Mapping
+        public string VariantSource { get; set; }
+        public List<NodeVariant> Variants { get; set; }
+
         // For LongRunning
         public NodeLifecycle Lifecycle { get; set; }
         
         // For Transient
         public List<MethodDefinition> ExecutionFlow { get; set; }
         
+        public List<NodeOutput> Outputs { get; set; }
+    }
+
+    public class NodeVariant
+    {
+        public string Value { get; set; }
+        public string Label { get; set; }
+        public string TypeName { get; set; }
+        public MethodDefinition Constructor { get; set; }
+        public List<MethodDefinition> ExecutionFlow { get; set; }
         public List<NodeOutput> Outputs { get; set; }
     }
 
@@ -78,11 +97,13 @@ namespace DrawflowPlayground.Models
     public class NodeParameter
     {
         public string Name { get; set; }
+        public string DisplayName { get; set; } // For UI Labels
         public int Order { get; set; }
         public string DataType { get; set; }
         public List<string> AllowedValues { get; set; }
         public object IsRequired { get; set; } // specific parsing logic needed
         public string Source { get; set; }
+        public object Value { get; set; } // Constant value from config
         public object DefaultValue { get; set; } 
         public bool HasDefaultValue => DefaultValue != null;
         public Type ParameterType => Type.GetType(DataType) ?? typeof(object);
@@ -131,5 +152,35 @@ namespace DrawflowPlayground.Models
     {
         public string SourceNodeId { get; set; }
         public string SourceOutputName { get; set; }
+    }
+
+    // --- UI Metadata DTOs ---
+
+    public class NodeMeta
+    {
+        public string NodeKey { get; set; }
+        public string DisplayName { get; set; }
+        public string NodeType { get; set; }
+        public string NodeTypeKey { get; set; }
+        public int NodeTypeOrder { get; set; }
+        public string VariantSource { get; set; }
+        public List<VariantMeta> Variants { get; set; }
+    }
+
+    public class VariantMeta
+    {
+        public string Value { get; set; }
+        public string Label { get; set; }
+        public List<NodeParameterMeta> Parameters { get; set; }
+        public List<NodeOutput> Outputs { get; set; }
+    }
+
+    public class NodeParameterMeta
+    {
+        public string Name { get; set; }
+        public string DisplayName { get; set; }
+        public string DataType { get; set; }
+        public string Source { get; set; }
+        public object Value { get; set; }
     }
 }

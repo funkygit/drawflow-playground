@@ -27,38 +27,63 @@
 
 <div class="container-fluid">
     <div class="row">
-        <div class="col-md-9">
+        <div class="col-md-7">
             <div id="drawflow"></div>
+        </div>
+        <div class="col-md-2" id="node-list-container">
+            <h4>Available Nodes</h4>
+            <div id="available-nodes" class="list-group">
+                <!-- Dynamically populated -->
+            </div>
+            <hr />
+            <h4>Legacy Nodes</h4>
+            <div class="drag-drawflow" draggable="true" ondragstart="drag(event)" data-node="start">
+                <i class="fas fa-play"></i><span> Start</span>
+            </div>
+            <div class="drag-drawflow" draggable="true" ondragstart="drag(event)" data-node="end">
+                <i class="fas fa-stop"></i><span> End</span>
+            </div>
+            <div class="drag-drawflow" draggable="true" ondragstart="drag(event)" data-node="loop">
+                <i class="fas fa-sync"></i><span> Loop</span>
+            </div>
+            <div class="drag-drawflow" draggable="true" ondragstart="drag(event)" data-node="conditional">
+                <i class="fas fa-question-circle"></i><span> Conditional</span>
+            </div>
+            <div class="drag-drawflow" draggable="true" ondragstart="drag(event)" data-node="iterator">
+                <i class="fas fa-list-ol"></i><span> Iterator</span>
+            </div>
         </div>
         <div class="col-md-3">
             <h3>Controls</h3>
             <button class="btn btn-primary w-100 mb-2" onclick="saveWorkflow()">Save Workflow</button>
             <button class="btn btn-success w-100 mb-2" onclick="runWorkflow()">Run Workflow</button>
+            
             <hr />
-            <h4>Nodes</h4>
-            <div class="drag-drawflow" draggable="true" ondragstart="drag(event)" data-node="start">
-                <i class="fas fa-play"></i><span> Start</span>
+            <div id="node-config-panel" style="display:none; border: 1px solid #ddd; padding: 10px; border-radius: 5px; background: #f9f9f9;">
+                <h4>Node Config</h4>
+                <div id="node-info" class="mb-2">
+                    <strong id="config-node-name"></strong> <span id="config-node-id" class="text-muted small"></span>
+                </div>
+                <!-- Variant Selector -->
+                <div id="variant-selector-container" class="mb-3">
+                    <label>Module Variant</label>
+                    <select id="variant-selector" class="form-select"></select>
+                </div>
+                <!-- Dynamic Form -->
+                <div id="dynamic-form-container"></div>
+                
+                <button class="btn btn-sm btn-secondary mt-2 w-100" onclick="updateNodeData()">Update Node</button>
             </div>
-            <div class="drag-drawflow" draggable="true" ondragstart="drag(event)" data-node="action">
-                <i class="fas fa-code-branch"></i><span> Action</span>
-            </div>
-            <div class="drag-drawflow" draggable="true" ondragstart="drag(event)" data-node="delay">
-                <i class="fas fa-clock"></i><span> Delay (2s)</span>
-            </div>
-            <div class="drag-drawflow" draggable="true" ondragstart="drag(event)" data-node="loop">
-                <i class="fas fa-sync"></i><span> Loop</span>
-            </div>
-            <div class="drag-drawflow" draggable="true" ondragstart="drag(event)" data-node="end">
-                <i class="fas fa-stop"></i><span> End</span>
-            </div>
+
             <hr />
             <h4>Log</h4>
-            <div id="log" style="height: 200px; overflow-y: scroll; border: 1px solid #eee; font-size: 0.8em;"></div>
+            <div id="log" style="height: 150px; overflow-y: scroll; border: 1px solid #eee; font-size: 0.8em;"></div>
         </div>
     </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/gh/jerosoler/Drawflow/dist/drawflow.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+<script src="/js/dynamic-form-renderer.js"></script>
 <script src="/js/workflow-manager.js"></script>
 <script src="/js/index-controller.js"></script>

@@ -12,9 +12,10 @@ namespace DrawflowPlayground.Utilities
 {
     public interface IDynamicExecutor
     {
-        object CreateInstance(string dllPath, string typeName);
+        object CreateInstance(string dllPath, string typeName, MethodDefinition constructorDef = null, Dictionary<string, object> inputs = null);
         Task<object> ExecuteMethodAsync(object instance, MethodDefinition methodDef, Dictionary<string, object> inputs);
         Task<object> ExecuteAsync(NodeConfiguration config, Dictionary<string, object> inputs); // Legacy/Simple wrapper
+        string ResolvePlaceholders(string template, Dictionary<string, object> inputs);
     }
 
     public class DynamicExecutor : IDynamicExecutor
@@ -28,7 +29,7 @@ namespace DrawflowPlayground.Utilities
             _parser = new ParameterParser();
         }
 
-        public object CreateInstance(string dllPath, string typeName)
+        public object CreateInstance(string dllPath, string typeName, MethodDefinition constructorDef = null, Dictionary<string, object> inputs = null)
         {
             var assemblyPath = Path.IsPathRooted(dllPath)
                 ? dllPath
@@ -42,10 +43,20 @@ namespace DrawflowPlayground.Utilities
             var loadContext = AssemblyLoadContext.Default; 
             var assembly = loadContext.LoadFromAssemblyPath(assemblyPath);
 
-            var type = assembly.GetType(typeName);
+            var resolvedTypeName = ResolvePlaceholders(typeName, inputs ?? new Dictionary<string, object>());
+            var type = assembly.GetType(resolvedTypeName);
             if (type == null)
             {
-                throw new TypeLoadException($"Type {typeName} not found in assembly {assemblyPath}");
+                throw new TypeLoadException($"Type {resolvedTypeName} not found in assembly {assemblyPath}");
+            }
+
+            if (constructorDef != null && inputs != null)
+            {
+                if (!_parser.ValidateAndExtract(constructorDef.Parameters, inputs, out var args, out var error))
+                {
+                    throw new ArgumentException($"Constructor parameter validation failed: {error}");
+                }
+                return Activator.CreateInstance(type, args);
             }
 
             return Activator.CreateInstance(type);
@@ -57,11 +68,12 @@ namespace DrawflowPlayground.Utilities
             if (methodDef == null) throw new ArgumentNullException(nameof(methodDef));
 
             var type = instance.GetType();
-            var method = type.GetMethod(methodDef.MethodName);
+            var resolvedMethodName = ResolvePlaceholders(methodDef.MethodName, inputs);
+            var method = type.GetMethod(resolvedMethodName);
             
             if (method == null)
             {
-                throw new MissingMethodException($"Method {methodDef.MethodName} not found in type {type.FullName}");
+                throw new MissingMethodException($"Method {resolvedMethodName} not found in type {type.FullName}");
             }
 
             // Parse Parameters using Utility
@@ -76,8 +88,13 @@ namespace DrawflowPlayground.Utilities
             if (result is Task task)
             {
                 await task.ConfigureAwait(false);
-                var resultProperty = task.GetType().GetProperty("Result");
-                return resultProperty?.GetValue(task);
+                var resultType = task.GetType();
+                if (resultType.IsGenericType && resultType.GetGenericTypeDefinition() == typeof(Task<>))
+                {
+                    var resultProperty = resultType.GetProperty("Result");
+                    return resultProperty?.GetValue(task);
+                }
+                return null;
             }
 
             return result;
@@ -89,15 +106,32 @@ namespace DrawflowPlayground.Utilities
             // If ExecutionFlow is present, run sequence
             if (config.ExecutionFlow != null && config.ExecutionFlow.Any())
             {
-                var instance = CreateInstance(config.DllPath, config.TypeName);
+                var instance = CreateInstance(config.DllPath, config.TypeName, config.Constructor, inputs);
                 object lastResult = null;
                 foreach (var method in config.ExecutionFlow.OrderBy(m => m.Sequence))
                 {
                     lastResult = await ExecuteMethodAsync(instance, method, inputs);
                 }
+                if (instance is IDisposable d) d.Dispose();
                 return lastResult;
             }
             return null;
+        }
+
+        public string ResolvePlaceholders(string template, Dictionary<string, object> inputs)
+        {
+            if (string.IsNullOrEmpty(template) || inputs == null) return template;
+
+            var result = template;
+            foreach (var input in inputs)
+            {
+                var placeholder = "{{" + input.Key + "}}";
+                if (result.Contains(placeholder))
+                {
+                    result = result.Replace(placeholder, input.Value?.ToString() ?? "");
+                }
+            }
+            return result;
         }
 
         private static object GetDefault(Type type)

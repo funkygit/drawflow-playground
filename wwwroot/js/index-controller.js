@@ -10,6 +10,53 @@ const connection = new signalR.HubConnectionBuilder()
 
 let currentWorkflowId = null;
 let currentExecutor = null;
+let nodeMetaList = [];
+let currentFormRenderer = null;
+
+async function fetchNodeMeta() {
+    try {
+        const res = await fetch('/Home/GetNodeMeta');
+        nodeMetaList = await res.json();
+        renderAvailableNodes();
+    } catch (err) {
+        log("Error fetching node meta: " + err);
+    }
+}
+
+function renderAvailableNodes() {
+    const container = document.getElementById('available-nodes');
+    container.innerHTML = '';
+
+    // Group by NodeType and sort by NodeTypeOrder
+    const grouped = nodeMetaList.reduce((acc, meta) => {
+        const key = meta.nodeType || "Other";
+        if (!acc[key]) acc[key] = { order: meta.nodeTypeOrder, list: [] };
+        acc[key].list.push(meta);
+        return acc;
+    }, {});
+
+    const sortedCategories = Object.keys(grouped).sort((a, b) => grouped[a].order - grouped[b].order);
+
+    sortedCategories.forEach(cat => {
+        const header = document.createElement('h6');
+        header.className = 'mt-2 text-primary';
+        header.innerText = cat;
+        container.appendChild(header);
+
+        grouped[cat].list.forEach(meta => {
+            const item = document.createElement('div');
+            item.className = 'list-group-item list-group-item-action py-1 px-2 small drag-drawflow';
+            item.draggable = true;
+            item.innerText = meta.displayName;
+            item.dataset.node = 'module';
+            item.dataset.nodeKey = meta.nodeKey;
+            item.ondragstart = drag;
+            container.appendChild(item);
+        });
+    });
+}
+
+fetchNodeMeta();
 
 connection.on("NodeStatusChanged", (executionId, nodeId, status) => {
     // Filter for current execution
@@ -47,32 +94,56 @@ function updateNodeVisuals(nodeId, status) {
 // Drag & Drop
 function drag(ev) {
     ev.dataTransfer.setData("node", ev.target.getAttribute('data-node'));
+    if (ev.target.getAttribute('data-node-key')) {
+        ev.dataTransfer.setData("nodeKey", ev.target.getAttribute('data-node-key'));
+    }
 }
 
 id.addEventListener('drop', (ev) => {
     ev.preventDefault();
     const nodeType = ev.dataTransfer.getData("node");
-    addNodeToDrawflow(nodeType, ev.clientX, ev.clientY);
+    const nodeKey = ev.dataTransfer.getData("nodeKey");
+    addNodeToDrawflow(nodeType, ev.clientX, ev.clientY, nodeKey);
 });
 
 id.addEventListener('dragover', (ev) => {
     ev.preventDefault();
 });
 
-function addNodeToDrawflow(type, posx, posy) {
+function addNodeToDrawflow(type, posx, posy, nodeKey = null) {
     if(editor.editor_mode === 'fixed') return false;
     posx = posx * ( editor.precanvas.clientWidth / (editor.precanvas.clientWidth * editor.zoom)) - (editor.precanvas.getBoundingClientRect().x * ( editor.precanvas.clientWidth / (editor.precanvas.clientWidth * editor.zoom)));
     posy = posy * ( editor.precanvas.clientHeight / (editor.precanvas.clientHeight * editor.zoom)) - (editor.precanvas.getBoundingClientRect().y * ( editor.precanvas.clientHeight / (editor.precanvas.clientHeight * editor.zoom)));
 
     let inputs = 1; 
     let outputs = 1;
-    if(type === 'start') { inputs = 1; outputs = 1; }
-    if(type === 'end') { inputs = 1; outputs = 0; }
-    if(type === 'loop') { inputs = 1; outputs = 1; }
-    // Delay is standard 1 in 1 out
+    let html = `<div>${type.toUpperCase()}</div>`;
+    let data = { name: type };
 
-    const html = `<div>${type.toUpperCase()}</div>`;
-    const data = { name: type }; 
+    if (nodeKey) {
+        const meta = nodeMetaList.find(m => m.nodeKey === nodeKey);
+        if (meta) {
+            data = { 
+                nodeKey: nodeKey,
+                displayName: meta.displayName,
+                nodeType: meta.nodeType,
+                selectedVariant: meta.variants && meta.variants.length > 0 ? meta.variants[0].value : null,
+                parameters: {} // To be filled by config
+            };
+            html = `<div><strong>${meta.displayName}</strong><br/><small>${meta.nodeType}</small></div>`;
+            
+            // Logic for IO based on type or defaults
+            if (meta.nodeTypeKey === 'input') inputs = 0;
+            if (meta.nodeTypeKey === 'output') outputs = 0;
+        }
+    } else {
+        if(type === 'start') { inputs = 0; outputs = 1; }
+        if(type === 'end') { inputs = 1; outputs = 0; }
+        if(type === 'loop') { inputs = 1; outputs = 1; }
+        if(type === 'conditional') { inputs = 1; outputs = 2; }
+        if(type === 'iterator') { inputs = 1; outputs = 2; }
+    }
+
     editor.addNode(type, inputs, outputs, posx, posy, type, data, html);
 }
 
@@ -120,6 +191,115 @@ async function runWorkflow() {
         await currentExecutor.start();
     });
     await currentExecutor.start();
+}
+
+// Node Selection & Config
+editor.on('nodeSelected', (id) => {
+    const node = editor.getNodeFromId(id);
+    if (node.data && node.data.nodeKey) {
+        showNodeConfig(id, node.data);
+    } else {
+        hideNodeConfig();
+    }
+});
+
+editor.on('nodeUnselected', () => hideNodeConfig());
+
+function showNodeConfig(nodeId, data) {
+    const panel = document.getElementById('node-config-panel');
+    const meta = nodeMetaList.find(m => m.nodeKey === data.nodeKey);
+    
+    if (!meta) return;
+
+    panel.style.display = 'block';
+    document.getElementById('config-node-name').innerText = meta.displayName;
+    document.getElementById('config-node-id').innerText = `(#${nodeId})`;
+
+    // Setup Variant Selector
+    const selector = document.getElementById('variant-selector');
+    selector.innerHTML = '';
+    meta.variants.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v.value;
+        opt.innerText = v.label;
+        if (v.value === data.selectedVariant) opt.selected = true;
+        selector.appendChild(opt);
+    });
+
+    selector.onchange = (e) => {
+        data.selectedVariant = e.target.value;
+        renderParams(nodeId, data, meta);
+    };
+
+    renderParams(nodeId, data, meta);
+}
+
+function renderParams(nodeId, data, meta) {
+    const container = document.getElementById('dynamic-form-container');
+    
+    currentFormRenderer = new DynamicFormRenderer(meta, (requiredType) => {
+        // Find previous nodes that output matching type
+        return findCompatiblePreviousNodes(nodeId, requiredType);
+    });
+
+    currentFormRenderer.renderVariantForm(data.selectedVariant, container);
+
+    // Populate existing values if any
+    if (data.parameters) {
+        Object.keys(data.parameters).forEach(key => {
+            const el = container.querySelector(`[name="${key}"]`);
+            if (el) el.value = data.parameters[key];
+        });
+    }
+}
+
+function findCompatiblePreviousNodes(currentNodeId, requiredType) {
+    const nodes = editor.export().drawflow.Home.data;
+    const compatible = [];
+
+    Object.keys(nodes).forEach(id => {
+        if (id == currentNodeId) return; // Skip self
+
+        const node = nodes[id];
+        if (node.data && node.data.nodeKey) {
+            const meta = nodeMetaList.find(m => m.nodeKey === node.data.nodeKey);
+            const variant = meta?.variants.find(v => v.value === node.data.selectedVariant);
+            
+            if (variant && variant.outputs) {
+                variant.outputs.forEach(output => {
+                    if (output.dataType === requiredType) {
+                        compatible.push({
+                            nodeId: id,
+                            outputName: output.name,
+                            label: `${node.data.displayName} (${output.name})`
+                        });
+                    }
+                });
+            }
+        }
+    });
+
+    return compatible;
+}
+
+function updateNodeData() {
+    const nodeId = document.getElementById('config-node-id').innerText.replace(/[()#]/g, '');
+    const data = editor.getNodeFromId(nodeId).data;
+    const container = document.getElementById('dynamic-form-container');
+
+    const inputs = container.querySelectorAll('input, select');
+    data.parameters = {};
+    inputs.forEach(input => {
+        if (input.name) {
+            data.parameters[input.name] = input.value;
+        }
+    });
+
+    log(`Updated Node ${nodeId} data`);
+}
+
+function hideNodeConfig() {
+    document.getElementById('node-config-panel').style.display = 'none';
 }
 
 function log(msg) {
