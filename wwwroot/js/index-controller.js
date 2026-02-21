@@ -180,9 +180,9 @@ async function runWorkflow() {
     await connection.invoke("JoinWorkflowGroup", executionId);
 
     // Init Executor
-    currentExecutor = new WorkflowExecutor(editor, connection, executionId, currentWorkflowId, async (newExecId) => {
+    currentExecutor = new WorkflowExecutor(editor, connection, executionId, currentWorkflowId, nodeMetaList, async (newExecId) => {
         // Handle Loop: Switch context to new Execution ID
-        currentExecutor = new WorkflowExecutor(editor, connection, newExecId, currentWorkflowId, currentExecutor.onChainExecution);
+        currentExecutor = new WorkflowExecutor(editor, connection, newExecId, currentWorkflowId, nodeMetaList, currentExecutor.onChainExecution);
         // Join new group
         connection.invoke("JoinWorkflowGroup", newExecId);
         // Clear visuals for new run

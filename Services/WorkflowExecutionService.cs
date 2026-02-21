@@ -80,63 +80,44 @@ namespace DrawflowPlayground.Services
             }
         }
 
-        public void QueueNode(Guid executionId, string nodeId, string nodeType = "action", NodeInput input = null)
+        public void QueueNode(ExecutionQueueItem item)
         {
-            if (!_activeExecutions.ContainsKey(executionId)) return;
+            if (!_activeExecutions.ContainsKey(item.ExecutionId)) return;
             if (_masterConfigs == null) LoadMasterConfigs();
 
-            var execution = _db.WorkflowExecutions.FindById(executionId);
-            var workflow = _db.WorkflowDefinitions.FindById(execution.WorkflowId);
-            
+            // Fetch config from master config by NodeKey
             NodeConfiguration config = null;
-
-            if (workflow != null && !string.IsNullOrEmpty(workflow.JsonData))
+            var master = _masterConfigs?.FirstOrDefault(m => m.NodeKey == item.NodeKey);
+            if (master != null)
             {
-                try {
-                    var doc = JsonNode.Parse(workflow.JsonData);
-                    var nodeData = doc?["drawflow"]?["Home"]?["data"]?[nodeId];
-                    var data = nodeData?["data"];
-                    
-                    if (data != null) {
-                        var nodeKey = data["nodeKey"]?.ToString();
-                        var selectedVariant = data["selectedVariant"]?.ToString();
-                        var parameters = data["parameters"]?.AsObject();
+                // Clone master config to avoid mutations
+                config = JsonSerializer.Deserialize<NodeConfiguration>(JsonSerializer.Serialize(master));
 
-                        var master = _masterConfigs?.FirstOrDefault(m => m.NodeKey == nodeKey);
-                        if (master != null) {
-                            // Clone master config to avoid mutations
-                            config = JsonSerializer.Deserialize<NodeConfiguration>(JsonSerializer.Serialize(master));
-                            
-                            // Apply User Parameters to the config (Source: USER_INPUT/CONSTANT)
-                            ApplyUserParameters(config, selectedVariant, parameters);
-                        }
-                    }
-                } catch (Exception ex) {
-                    _logger.LogError(ex, $"Error parsing workflow JSON for node {nodeId}");
-                }
+                // Apply user parameters from the queue item
+                ApplyUserParameters(config, item.Parameters);
             }
 
-            var queueItem = new ExecutionQueueItem
-            {
-                ExecutionId = executionId,
-                NodeId = nodeId,
-                NodeType = nodeType,
-                Configuration = config,
-                Input = input,
-                QueuedAt = DateTime.UtcNow,
-                Processed = false
-            };
-            _db.ExecutionQueue.Insert(queueItem);
-             _logger.LogInformation($"Queued Node {nodeId} ({nodeType}) for Execution {executionId}");
+            item.Configuration = config;
+            item.QueuedAt = DateTime.UtcNow;
+            item.Processed = false;
+            _db.ExecutionQueue.Insert(item);
+            _logger.LogInformation($"Queued Node {item.NodeId} ({item.NodeType}) for Execution {item.ExecutionId}");
         }
 
-        private void ApplyUserParameters(NodeConfiguration config, string selectedVariant, JsonObject parameters)
+        private void ApplyUserParameters(NodeConfiguration config, List<NodeParameterMeta> parameters)
         {
             // Resolve the target variant
             NodeVariant variant = null;
-            if (!string.IsNullOrEmpty(config.VariantSource) && !string.IsNullOrEmpty(selectedVariant))
+            if (!string.IsNullOrEmpty(config.VariantSource))
             {
-                variant = config.Variants?.FirstOrDefault(v => v.Value == selectedVariant);
+                // Find the variant value from the parameters list (variant source is passed as a parameter)
+                var variantParam = parameters?.FirstOrDefault(p => p.Name == config.VariantSource);
+                var selectedVariant = variantParam?.Value?.ToString();
+
+                if (!string.IsNullOrEmpty(selectedVariant))
+                {
+                    variant = config.Variants?.FirstOrDefault(v => v.Value == selectedVariant);
+                }
             }
             else
             {
@@ -146,19 +127,16 @@ namespace DrawflowPlayground.Services
 
             if (variant == null) return;
 
-            // Inject other parameters from the UI into the variant's Constructor and ExecutionFlow
+            // Inject parameters from the queue item into the variant's Constructor and ExecutionFlow
             if (parameters != null)
             {
-                foreach (var kvp in parameters)
+                foreach (var param in parameters)
                 {
-                    var paramName = kvp.Key;
-                    var paramValue = kvp.Value?.ToString();
-
-                    UpdateParameterValue(variant.Constructor?.Parameters, paramName, paramValue);
+                    UpdateParameterValue(variant.Constructor?.Parameters, param.Name, param.Value?.ToString());
                     if (variant.ExecutionFlow != null)
                     {
                         foreach (var m in variant.ExecutionFlow)
-                            UpdateParameterValue(m.Parameters, paramName, paramValue);
+                            UpdateParameterValue(m.Parameters, param.Name, param.Value?.ToString());
                     }
                 }
             }

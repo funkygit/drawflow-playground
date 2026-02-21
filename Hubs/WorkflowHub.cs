@@ -1,3 +1,4 @@
+using DrawflowPlayground.Models;
 using Microsoft.AspNetCore.SignalR;
 using System.Threading.Tasks;
 
@@ -27,9 +28,9 @@ namespace DrawflowPlayground.Hubs
             return _executionService.StartWorkflow(workflowId, parentExecutionId);
         }
 
-        public async Task QueueNode(Guid executionId, string nodeId, string nodeType)
+        public async Task QueueNode(ExecutionQueueItem item)
         {
-            _executionService.QueueNode(executionId, nodeId, nodeType);
+            _executionService.QueueNode(item);
         }
 
         public async Task PauseExecution(Guid executionId)

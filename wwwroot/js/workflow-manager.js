@@ -1,9 +1,10 @@
 class WorkflowExecutor {
-    constructor(editor, connection, executionId, workflowId, onChainExecution = null) {
+    constructor(editor, connection, executionId, workflowId, nodeMetaList, onChainExecution = null) {
         this.editor = editor;
         this.connection = connection;
         this.executionId = executionId;
         this.workflowId = workflowId;
+        this.nodeMetaList = nodeMetaList;
         this.onChainExecution = onChainExecution;
         this.nodeResults = {};
     }
@@ -25,16 +26,151 @@ class WorkflowExecutor {
             // Convention: Start nodes have no inputs OR are explicitly named 'start'
             if (inputCount === 0 || node.name.toLowerCase() === 'start') {
                 this.log(`Queueing Start Node ${nodeId}...`);
-                await this.connection.invoke("QueueNode", this.executionId, nodeId, "start");
+                const queueItem = this.buildQueueItem(nodeId, nodes);
+                await this.connection.invoke("QueueNode", queueItem);
             }
         }
     }
 
+    /**
+     * Builds an ExecutionQueueItem from the node data and connections.
+     * @param {string} nodeId - The Drawflow node ID.
+     * @param {Object} nodes - All nodes from the exported Drawflow data.
+     * @param {string} [completedNodeId] - The parent node that triggered this queue (for input resolution).
+     * @returns {Object} An ExecutionQueueItem-compatible object for SignalR.
+     */
+    buildQueueItem(nodeId, nodes, completedNodeId = null) {
+        const node = nodes[nodeId];
+        const nodeData = node.data || {};
+
+        const nodeKey = nodeData.nodeKey || null;
+        const nodeType = nodeData.nodeType || node.name || 'action';
+
+        // Build parameters by scraping the saved data.parameters
+        const parameters = this._buildParameters(nodeData);
+
+        // Resolve NodeInput from connections
+        const input = this._resolveInput(nodeId, nodes, completedNodeId);
+
+        return {
+            executionId: this.executionId,
+            nodeId: nodeId,
+            nodeKey: nodeKey,
+            nodeType: nodeType,
+            parameters: parameters,
+            input: input
+        };
+    }
+
+    /**
+     * Builds a List<NodeParameterMeta> from the node's saved parameters and variant selection.
+     * Scrapes the stored data.parameters (flat { name: value } map) and uses nodeMetaList
+     * to supplement with dataType. Includes the variant source as a parameter entry.
+     */
+    _buildParameters(nodeData) {
+        const params = [];
+        const nodeKey = nodeData.nodeKey;
+        const meta = nodeKey ? this.nodeMetaList.find(m => m.nodeKey === nodeKey) : null;
+
+        // Include variant source as a parameter if applicable
+        if (meta && meta.variantSource && nodeData.selectedVariant) {
+            params.push({
+                name: meta.variantSource,
+                value: nodeData.selectedVariant,
+                dataType: 'System.String',
+                source: 'USER_INPUT'
+            });
+        }
+
+        // Convert saved parameters { name: value } into NodeParameterMeta list
+        if (nodeData.parameters) {
+            // Find the active variant's parameter metadata for dataType lookup
+            let variantMeta = null;
+            if (meta && meta.variants) {
+                variantMeta = meta.variants.find(v => v.value === nodeData.selectedVariant);
+                if (!variantMeta) variantMeta = meta.variants[0]; // fallback to first
+            }
+
+            Object.keys(nodeData.parameters).forEach(paramName => {
+                // Skip if this is the variant source (already added above)
+                if (meta && meta.variantSource && paramName === meta.variantSource) return;
+
+                const paramValue = nodeData.parameters[paramName];
+
+                // Look up dataType from variant metadata, default to System.String
+                let dataType = 'System.String';
+                let source = 'USER_INPUT';
+                if (variantMeta && variantMeta.parameters) {
+                    const paramMeta = variantMeta.parameters.find(p => p.name === paramName);
+                    if (paramMeta) {
+                        dataType = paramMeta.dataType || 'System.String';
+                        source = paramMeta.source || 'USER_INPUT';
+                    }
+                }
+
+                params.push({
+                    name: paramName,
+                    value: paramValue,
+                    dataType: dataType,
+                    source: source
+                });
+            });
+        }
+
+        return params;
+    }
+
+    /**
+     * Resolves NodeInput from Drawflow connections.
+     * Finds the connection from completedNodeId to this node, or the first input connection.
+     */
+    _resolveInput(nodeId, nodes, completedNodeId) {
+        const node = nodes[nodeId];
+        if (!node || !node.inputs) return null;
+
+        for (const inputKey in node.inputs) {
+            const connections = node.inputs[inputKey].connections;
+            if (connections && connections.length > 0) {
+                for (const conn of connections) {
+                    // If a specific parent triggered this, prefer that connection
+                    if (completedNodeId && conn.node !== completedNodeId) continue;
+
+                    const sourceNodeId = conn.node;
+                    const sourceNode = nodes[sourceNodeId];
+
+                    // Resolve the output name from the connection
+                    // conn.output is the Drawflow output key (e.g., "output_1")
+                    // Map to the actual output name from the node's meta
+                    let sourceOutputName = conn.output;
+
+                    if (sourceNode && sourceNode.data && sourceNode.data.nodeKey) {
+                        const sourceMeta = this.nodeMetaList.find(m => m.nodeKey === sourceNode.data.nodeKey);
+                        if (sourceMeta) {
+                            const sourceVariant = sourceMeta.variants?.find(v => v.value === sourceNode.data.selectedVariant)
+                                || sourceMeta.variants?.[0];
+                            if (sourceVariant && sourceVariant.outputs) {
+                                // Map output_1 -> index 0, output_2 -> index 1, etc.
+                                const outputIndex = parseInt(conn.output.replace('output_', '')) - 1;
+                                if (sourceVariant.outputs[outputIndex]) {
+                                    sourceOutputName = sourceVariant.outputs[outputIndex].name;
+                                }
+                            }
+                        }
+                    }
+
+                    return {
+                        sourceNodeId: sourceNodeId,
+                        sourceOutputName: sourceOutputName
+                    };
+                }
+            }
+        }
+
+        return null;
+    }
+
     async handleNodeCompletion(nodeId) {
         this.nodeResults[nodeId] = "Completed";
-        
-        // Loop Logic: Removed. Loop nodes now have outputs and connect back to other nodes. This allows for cycles.
-
         await this._checkAndQueueChildren(nodeId);
     }
 
@@ -58,10 +194,9 @@ class WorkflowExecutor {
 
         for (const childId of childrenIds) {
             if (this._canQueue(childId, nodes)) {
-                 const childNode = nodes[childId];
-                 const type = childNode.name.toLowerCase().includes("delay") ? "delay" : "action";
-                 this.log(`Queueing Node ${childId} (${type})...`);
-                 await this.connection.invoke("QueueNode", this.executionId, childId, type);
+                 this.log(`Queueing Node ${childId}...`);
+                 const queueItem = this.buildQueueItem(childId, nodes, completedNodeId);
+                 await this.connection.invoke("QueueNode", queueItem);
             }
         }
         
@@ -112,4 +247,3 @@ class WorkflowExecutor {
         console.log(`[Exec ${this.executionId}] ${msg}`);
     }
 }
- 

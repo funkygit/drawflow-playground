@@ -34,10 +34,13 @@ namespace DrawflowPlayground.Models
     {
         [BsonId]
         public Guid Id { get; set; }
+        public Guid WorkflowId { get; set; }    
         public Guid ExecutionId { get; set; }
         public string NodeId { get; set; } // Drawflow uses string IDs usually
+        public string NodeKey { get; set; } 
         public string NodeType { get; set; }
-        public NodeConfiguration Configuration { get; set; }
+        public NodeConfiguration Configuration { get; set; } // This will be fetched from config based on the node_key
+        public List<NodeParameterMeta> Parameters { get; set; } // This will be passed by UI
         public NodeInput Input { get; set; }
         public DateTime QueuedAt { get; set; }
         public bool Processed { get; set; }
