@@ -14,7 +14,7 @@ namespace DrawflowPlayground.Utilities
     {
         object CreateInstance(string dllPath, string typeName, MethodDefinition constructorDef = null, Dictionary<string, object> inputs = null);
         Task<object> ExecuteMethodAsync(object instance, MethodDefinition methodDef, Dictionary<string, object> inputs);
-        Task<object> ExecuteAsync(NodeConfiguration config, Dictionary<string, object> inputs); // Legacy/Simple wrapper
+        Task<object> ExecuteAsync(NodeConfiguration config, string typeName, MethodDefinition constructorDef, Dictionary<string, object> inputs); // Legacy/Simple wrapper
         string ResolvePlaceholders(string template, Dictionary<string, object> inputs);
     }
 
@@ -100,13 +100,13 @@ namespace DrawflowPlayground.Utilities
             return result;
         }
 
-        public async Task<object> ExecuteAsync(NodeConfiguration config, Dictionary<string, object> inputs)
+        public async Task<object> ExecuteAsync(NodeConfiguration config, string typeName, MethodDefinition constructorDef, Dictionary<string, object> inputs)
         {
             // Wrapper for simple execution (Transient/Legacy)
             // If ExecutionFlow is present, run sequence
             if (config.ExecutionFlow != null && config.ExecutionFlow.Any())
             {
-                var instance = CreateInstance(config.DllPath, config.TypeName, config.Constructor, inputs);
+                var instance = CreateInstance(config.DllPath, typeName, constructorDef, inputs);
                 object lastResult = null;
                 foreach (var method in config.ExecutionFlow.OrderBy(m => m.Sequence))
                 {

@@ -76,5 +76,78 @@
                 ]
             }
         ]
+    },
+    {
+        "NodeKey": "image_splitter",
+        "DisplayName": "Image Splitter",
+        "NodeType": "Processing",
+        "NodeTypeKey": "processing",
+        "NodeTypeOrder": 2,
+        "ExecutionMode": "Transient",
+        "DllPath": "External/ImageTools.dll",
+        "VariantSource": null,
+        "Variants": [
+            {
+                "Value": "default",
+                "Label": "Image Splitter",
+                "TypeName": "ImageTools.Splitter",
+                "Constructor": {
+                    "Parameters": [
+                        {
+                            "Name": "imagePath",
+                            "DisplayName": "Image Path",
+                            "Order": 1,
+                            "DataType": "System.String",
+                            "Source": "NODE_OUTPUT",
+                            "Value": null
+                        },
+                        {
+                            "Name": "rows",
+                            "DisplayName": "Rows",
+                            "Order": 2,
+                            "DataType": "System.Int32",
+                            "Source": "USER_INPUT",
+                            "Value": 2
+                        },
+                        {
+                            "Name": "columns",
+                            "DisplayName": "Columns",
+                            "Order": 3,
+                            "DataType": "System.Int32",
+                            "Source": "USER_INPUT",
+                            "Value": 2
+                        }
+                    ]
+                },
+                "ExecutionFlow": [
+                    {
+                        "Sequence": 1,
+                        "MethodName": "Split",
+                        "Parameters": [
+                            {
+                                "Name": "outputDirectory",
+                                "DisplayName": "Output Directory",
+                                "Order": 1,
+                                "DataType": "System.String",
+                                "Source": "USER_INPUT",
+                                "Value": "output/pieces"
+                            }
+                        ]
+                    }
+                ],
+                "Outputs": [
+                    {
+                        "Name": "Pieces",
+                        "DataType": "System.Collections.Generic.List`1[System.String]",
+                        "Description": "List of file paths for each image piece"
+                    },
+                    {
+                        "Name": "PieceCount",
+                        "DataType": "System.Int32",
+                        "Description": "Total number of pieces created"
+                    }
+                ]
+            }
+        ]
     }
 ]

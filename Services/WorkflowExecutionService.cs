@@ -132,32 +132,21 @@ namespace DrawflowPlayground.Services
 
         private void ApplyUserParameters(NodeConfiguration config, string selectedVariant, JsonObject parameters)
         {
-            // 1. Set the Variant Discriminator
+            // Resolve the target variant
+            NodeVariant variant = null;
             if (!string.IsNullOrEmpty(config.VariantSource) && !string.IsNullOrEmpty(selectedVariant))
             {
-                // Inject the discriminator value into a dummy parameter or just ensure it's in the data
-                // For simplicity, we'll make sure it's accessible in the inputs dict later.
-                // We can add it as a constant parameter to the config root.
-                
-                // Track where to inject it (Constructor or Methods)
-                // But wait, the resolution happens in ProcessNode. 
-                // We just need to make sure ProcessNode knows about 'selectedVariant'.
-                
-                // We'll use a hacky way: add a parameter to the config that holds this value.
-                if (config.Constructor == null) config.Constructor = new MethodDefinition { Parameters = new List<NodeParameter>() };
-                if (config.Constructor.Parameters == null) config.Constructor.Parameters = new List<NodeParameter>();
-                
-                if (!config.Constructor.Parameters.Any(p => p.Name == config.VariantSource))
-                {
-                    config.Constructor.Parameters.Add(new NodeParameter { 
-                        Name = config.VariantSource, 
-                        Source = "Constant", 
-                        Value = selectedVariant 
-                    });
-                }
+                variant = config.Variants?.FirstOrDefault(v => v.Value == selectedVariant);
+            }
+            else
+            {
+                // Non-variant node: use the first (and only) variant
+                variant = config.Variants?.FirstOrDefault();
             }
 
-            // 2. Inject other parameters from the UI
+            if (variant == null) return;
+
+            // Inject other parameters from the UI into the variant's Constructor and ExecutionFlow
             if (parameters != null)
             {
                 foreach (var kvp in parameters)
@@ -165,11 +154,10 @@ namespace DrawflowPlayground.Services
                     var paramName = kvp.Key;
                     var paramValue = kvp.Value?.ToString();
 
-                    // Find this parameter in the config (Constructor or Flow) and update its value
-                    UpdateParameterValue(config.Constructor?.Parameters, paramName, paramValue);
-                    if (config.ExecutionFlow != null)
+                    UpdateParameterValue(variant.Constructor?.Parameters, paramName, paramValue);
+                    if (variant.ExecutionFlow != null)
                     {
-                        foreach (var m in config.ExecutionFlow)
+                        foreach (var m in variant.ExecutionFlow)
                             UpdateParameterValue(m.Parameters, paramName, paramValue);
                     }
                 }
@@ -323,12 +311,14 @@ namespace DrawflowPlayground.Services
                     var config = item.Configuration;
                     var inputs = new Dictionary<string, object>(); 
 
-                    // 0. Initialize Inputs from Configuration Constants (Resolved during QueueNode)
-                    if (config.Constructor?.Parameters != null)
+                    // 0. Resolve Variant first (needed for all subsequent steps)
+                    NodeVariant resolvedVariant = null;
+                    if (string.IsNullOrEmpty(config.VariantSource))
                     {
-                        foreach (var p in config.Constructor.Parameters.Where(p => p.Source == "Constant"))
-                            inputs[p.Name] = p.Value;
+                        // Non-variant node: use the first (default) variant
+                        resolvedVariant = config.Variants?.FirstOrDefault();
                     }
+                    // else: multi-variant — resolved in step 2 after inputs are populated
                     if (config.ExecutionFlow != null)
                     {
                         foreach (var m in config.ExecutionFlow)
@@ -403,23 +393,43 @@ namespace DrawflowPlayground.Services
                         }
                     }
 
-                    // 2. Resolve Variant (New Logic)
+                    // 2. Resolve Variant (Multi-variant nodes)
                     if (!string.IsNullOrEmpty(config.VariantSource) && config.Variants != null)
                     {
                         if (inputs.TryGetValue(config.VariantSource, out var variantValue))
                         {
-                            var variant = config.Variants.FirstOrDefault(v => v.Value == variantValue?.ToString());
-                            if (variant != null)
+                            resolvedVariant = config.Variants.FirstOrDefault(v => v.Value == variantValue?.ToString());
+                            if (resolvedVariant != null)
                             {
-                                _logger.LogInformation($"Applying Variant: {variant.Label} ({variant.Value})");
-                                if (!string.IsNullOrEmpty(variant.TypeName)) config.TypeName = variant.TypeName;
-                                if (variant.Constructor != null) config.Constructor = variant.Constructor;
-                                if (variant.ExecutionFlow != null) config.ExecutionFlow = variant.ExecutionFlow;
-                                if (variant.Outputs != null) config.Outputs = variant.Outputs;
+                                _logger.LogInformation($"Applying Variant: {resolvedVariant.Label} ({resolvedVariant.Value})");
                             }
                             else
                             {
                                 _logger.LogWarning($"Variant not found for value '{variantValue}' (Source: {config.VariantSource})");
+                            }
+                        }
+                    }
+
+                    // Extract resolved properties from variant
+                    var resolvedTypeName = resolvedVariant?.TypeName;
+                    var resolvedConstructor = resolvedVariant?.Constructor;
+                    var resolvedExecutionFlow = resolvedVariant?.ExecutionFlow ?? config.ExecutionFlow;
+                    var resolvedOutputs = resolvedVariant?.Outputs ?? config.Outputs;
+
+                    // Initialize Inputs from Resolved Constants
+                    if (resolvedConstructor?.Parameters != null)
+                    {
+                        foreach (var p in resolvedConstructor.Parameters.Where(p => p.Source == "Constant"))
+                            inputs[p.Name] = p.Value;
+                    }
+                    if (resolvedExecutionFlow != null)
+                    {
+                        foreach (var m in resolvedExecutionFlow)
+                        {
+                            if (m.Parameters != null)
+                            {
+                                foreach (var p in m.Parameters.Where(p => p.Source == "Constant"))
+                                    inputs[p.Name] = p.Value;
                             }
                         }
                     }
@@ -430,7 +440,7 @@ namespace DrawflowPlayground.Services
                         _logger.LogInformation($"Starting LongRunning Node {item.NodeId}");
                         
                         // 1. Create Instance
-                        var instance = _dynamicExecutor.CreateInstance(config.DllPath, config.TypeName, config.Constructor, inputs);
+                        var instance = _dynamicExecutor.CreateInstance(config.DllPath, resolvedTypeName, resolvedConstructor, inputs);
                         
                         // 2. Execute OnStart
                         if (config.Lifecycle.OnStart != null)
@@ -447,14 +457,14 @@ namespace DrawflowPlayground.Services
                         
                         output = "Started (Long Running)";
                     }
-                    else if (config.ExecutionFlow != null)
+                    else if (resolvedExecutionFlow != null)
                     {
                         // Transient
                         _logger.LogInformation($"Executing Transient Node {item.NodeId}");
-                        var instance = _dynamicExecutor.CreateInstance(config.DllPath, config.TypeName, config.Constructor, inputs);
+                        var instance = _dynamicExecutor.CreateInstance(config.DllPath, resolvedTypeName, resolvedConstructor, inputs);
                         
                         object lastResult = null;
-                        foreach (var method in config.ExecutionFlow.OrderBy(m => m.Sequence))
+                        foreach (var method in resolvedExecutionFlow.OrderBy(m => m.Sequence))
                         {
                             lastResult = await _dynamicExecutor.ExecuteMethodAsync(instance, method, inputs);
                         }

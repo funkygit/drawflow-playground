@@ -51,10 +51,7 @@ namespace DrawflowPlayground.Models
         public string NodeTypeKey { get; set; } // "input", "processing", "output"
         public int NodeTypeOrder { get; set; } // 1, 2, 3...
         public string ExecutionMode { get; set; } // "LongRunning" or "Transient"
-        public string DllPath { get; set; }
-        public string TypeName { get; set; }
-        
-        public MethodDefinition Constructor { get; set; }
+        public string DllPath { get; set; }  
 
         // For Variant-Based Mapping
         public string VariantSource { get; set; }
