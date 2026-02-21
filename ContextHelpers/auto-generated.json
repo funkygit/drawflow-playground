@@ -1,5 +1,161 @@
 [
     {
+        "NodeKey": "end",
+        "DisplayName": "End",
+        "NodeType": "Control",
+        "NodeTypeKey": "control",
+        "NodeTypeOrder": 1,
+        "ExecutionMode": "BuiltIn",
+        "DllPath": null,
+        "VariantSource": null,
+        "Variants": [
+            {
+                "Value": "default",
+                "Label": "End Node",
+                "Outputs": []
+            }
+        ]
+    },
+    {
+        "NodeKey": "loop",
+        "DisplayName": "Loop",
+        "NodeType": "Control",
+        "NodeTypeKey": "control",
+        "NodeTypeOrder": 1,
+        "ExecutionMode": "BuiltIn",
+        "DllPath": null,
+        "VariantSource": null,
+        "Variants": [
+            {
+                "Value": "default",
+                "Label": "Loop Node",
+                "Outputs": [
+                    {
+                        "Name": "Next",
+                        "DataType": "System.Object"
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "NodeKey": "conditional",
+        "DisplayName": "Conditional",
+        "NodeType": "Control",
+        "NodeTypeKey": "control",
+        "NodeTypeOrder": 1,
+        "ExecutionMode": "BuiltIn",
+        "DllPath": null,
+        "VariantSource": null,
+        "Variants": [
+            {
+                "Value": "default",
+                "Label": "Conditional Node",
+                "Constructor": {
+                    "Parameters": [
+                        {
+                            "Name": "lhsSource",
+                            "DisplayName": "Left-Hand Side (Source Output)",
+                            "Order": 1,
+                            "DataType": "System.Object",
+                            "Source": "NODE_OUTPUT"
+                        },
+                        {
+                            "Name": "operator",
+                            "DisplayName": "Operator",
+                            "Order": 2,
+                            "DataType": "System.String",
+                            "Source": "USER_INPUT",
+                            "AllowedValues": [
+                                "Equals",
+                                "NotEquals",
+                                "GreaterThan",
+                                "LessThan"
+                            ]
+                        },
+                        {
+                            "Name": "rhsValue",
+                            "DisplayName": "Right-Hand Side (Value)",
+                            "Order": 3,
+                            "DataType": "System.String",
+                            "Source": "USER_INPUT"
+                        }
+                    ]
+                },
+                "Outputs": [
+                    {
+                        "Name": "True",
+                        "DataType": "System.Boolean",
+                        "Description": "Condition met — routes to true branch"
+                    },
+                    {
+                        "Name": "False",
+                        "DataType": "System.Boolean",
+                        "Description": "Condition not met — routes to false branch"
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "NodeKey": "iterator",
+        "DisplayName": "Iterator",
+        "NodeType": "Control",
+        "NodeTypeKey": "control",
+        "NodeTypeOrder": 1,
+        "ExecutionMode": "BuiltIn",
+        "DllPath": null,
+        "VariantSource": null,
+        "Variants": [
+            {
+                "Value": "default",
+                "Label": "Iterator Node",
+                "Constructor": {
+                    "Parameters": [
+                        {
+                            "Name": "iterationMode",
+                            "DisplayName": "Iteration Mode",
+                            "Order": 1,
+                            "DataType": "System.String",
+                            "Source": "USER_INPUT",
+                            "AllowedValues": [
+                                "Collection",
+                                "Count"
+                            ]
+                        },
+                        {
+                            "Name": "sourceCollection",
+                            "DisplayName": "Source Collection",
+                            "Order": 2,
+                            "DataType": "System.Object",
+                            "Source": "NODE_OUTPUT"
+                        },
+                        {
+                            "Name": "count",
+                            "DisplayName": "Iteration Count",
+                            "Order": 3,
+                            "DataType": "System.Int32",
+                            "Source": "USER_INPUT",
+                            "Value": 1
+                        }
+                    ]
+                },
+                "Outputs": [
+                    {
+                        "Name": "CurrentItem",
+                        "DataType": "System.Object",
+                        "Description": "Current iteration item/index"
+                    },
+                    {
+                        "Name": "Exit",
+                        "DataType": "System.Object",
+                        "Description": "Iteration complete"
+                    }
+                ]
+            }
+        ]
+    },
+    {
         "NodeKey": "multi_provider_storage",
         "DisplayName": "Cloud Storage Node",
         "NodeType": "Processing",

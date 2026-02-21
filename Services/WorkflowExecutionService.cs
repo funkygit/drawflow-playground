@@ -28,6 +28,9 @@ namespace DrawflowPlayground.Services
         // Track active node instances for LongRunning nodes: ExecutionId -> NodeId -> Instance
         private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, object>> _activeNodeInstances = new();
 
+        // Track iterator state: "executionId_nodeId" -> IteratorState
+        private readonly ConcurrentDictionary<string, IteratorState> _iteratorStates = new();
+
         public WorkflowExecutionService(LiteDbContext db, IHubContext<WorkflowHub> hubContext, IDynamicExecutor dynamicExecutor, ILogger<WorkflowExecutionService> logger)
         {
             _db = db;
@@ -271,13 +274,23 @@ namespace DrawflowPlayground.Services
                  _cancellationTokens.TryRemove(executionId, out _);
                  _pauseEvents.TryRemove(executionId, out _);
                  _activeNodeInstances.TryRemove(executionId, out _);
+                 // Clean up iterator states for this execution
+                 foreach (var key in _iteratorStates.Keys.Where(k => k.StartsWith(executionId.ToString())))
+                     _iteratorStates.TryRemove(key, out _);
             }
         }
 
         private async Task ProcessNode(ExecutionQueueItem item, Guid executionId)
         {
             _logger.LogInformation($"Processing Node {item.NodeId} ({item.NodeType})...");
-            await _hubContext.Clients.Group(executionId.ToString()).SendAsync("NodeStatusChanged", executionId, item.NodeId, "Running");
+            await _hubContext.Clients.Group(executionId.ToString()).SendAsync("NodeStatusChanged", executionId, item.NodeId, "Running", (string)null);
+
+            // BuiltIn nodes are handled inline — no DLL loading
+            if (item.Configuration?.ExecutionMode == "BuiltIn")
+            {
+                await ProcessBuiltInNode(item, executionId);
+                return;
+            }
             
             string output = "Success";
             bool isLongRunning = false;
@@ -476,7 +489,199 @@ namespace DrawflowPlayground.Services
             // Only mark "Completed" visually if it's NOT LongRunning, OR if we want to show it's "Ready". 
             // Usually LongRunning might show "Active".
             var status = isLongRunning ? "Active" : "Completed";
-            await _hubContext.Clients.Group(executionId.ToString()).SendAsync("NodeStatusChanged", executionId, item.NodeId, status);
+            await _hubContext.Clients.Group(executionId.ToString()).SendAsync("NodeStatusChanged", executionId, item.NodeId, status, (string)null);
+        }
+
+        // ========== Built-In Node Handlers ==========
+
+        private async Task ProcessBuiltInNode(ExecutionQueueItem item, Guid executionId)
+        {
+            string output = "Success";
+            string triggeredOutput = null; // null = queue all children, specific = route to one output
+
+            try
+            {
+                switch (item.NodeKey)
+                {
+                    case "end":
+                        output = HandleEndNode(executionId);
+                        break;
+                    case "loop":
+                        output = "PassThrough";
+                        break;
+                    case "conditional":
+                        (output, triggeredOutput) = HandleConditionalNode(item, executionId);
+                        break;
+                    case "iterator":
+                        (output, triggeredOutput) = HandleIteratorNode(item, executionId);
+                        break;
+                    default:
+                        _logger.LogWarning($"Unknown BuiltIn node key: {item.NodeKey}");
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error executing BuiltIn node {item.NodeId} ({item.NodeKey})");
+                output = $"Error: {ex.Message}";
+            }
+
+            // Record result
+            _db.ExecutionResults.Insert(new ExecutionResult
+            {
+                ExecutionId = executionId,
+                NodeId = item.NodeId,
+                Output = output,
+                CompletedAt = DateTime.UtcNow
+            });
+
+            await _hubContext.Clients.Group(executionId.ToString())
+                .SendAsync("NodeStatusChanged", executionId, item.NodeId, "Completed", triggeredOutput);
+        }
+
+        private string HandleEndNode(Guid executionId)
+        {
+            _logger.LogInformation($"End Node reached for Execution {executionId}. Marking completed.");
+            UpdateStatus(executionId, ExecutionStatus.Completed);
+
+            // Clean up iterator states for this execution
+            foreach (var key in _iteratorStates.Keys.Where(k => k.StartsWith(executionId.ToString())))
+                _iteratorStates.TryRemove(key, out _);
+
+            return "Workflow Completed";
+        }
+
+        private (string output, string triggeredOutput) HandleConditionalNode(ExecutionQueueItem item, Guid executionId)
+        {
+            // Resolve LHS from a preceding node's output
+            var lhsValue = ResolveParameterFromResult(item, executionId, "lhsSource");
+            var op = item.Parameters?.FirstOrDefault(p => p.Name == "operator")?.Value?.ToString();
+            var rhs = item.Parameters?.FirstOrDefault(p => p.Name == "rhsValue")?.Value?.ToString();
+
+            _logger.LogInformation($"Conditional: LHS='{lhsValue}' {op} RHS='{rhs}'");
+            bool result = EvaluateCondition(lhsValue, op, rhs);
+
+            var branch = result ? "output_1" : "output_2";
+            _logger.LogInformation($"Conditional result: {result} → routing to {branch}");
+            return ($"Condition: {result}", branch);
+        }
+
+        private (string output, string triggeredOutput) HandleIteratorNode(ExecutionQueueItem item, Guid executionId)
+        {
+            var stateKey = $"{executionId}_{item.NodeId}";
+
+            if (!_iteratorStates.TryGetValue(stateKey, out var state))
+            {
+                // First invocation — initialize state
+                var mode = item.Parameters?.FirstOrDefault(p => p.Name == "iterationMode")?.Value?.ToString() ?? "Count";
+                state = new IteratorState { Mode = mode, CurrentIndex = 0 };
+
+                if (mode == "Collection")
+                {
+                    var collectionJson = ResolveParameterFromResult(item, executionId, "sourceCollection");
+                    try
+                    {
+                        state.Items = JsonSerializer.Deserialize<List<string>>(collectionJson ?? "[]");
+                    }
+                    catch
+                    {
+                        // If it's not a JSON array, wrap single value
+                        state.Items = new List<string> { collectionJson ?? "" };
+                    }
+                    _logger.LogInformation($"Iterator initialized (Collection mode): {state.Items.Count} items");
+                }
+                else
+                {
+                    int.TryParse(item.Parameters?.FirstOrDefault(p => p.Name == "count")?.Value?.ToString(), out var count);
+                    state.TotalCount = count;
+                    _logger.LogInformation($"Iterator initialized (Count mode): {count} iterations");
+                }
+
+                _iteratorStates[stateKey] = state;
+            }
+
+            if (!state.IsComplete)
+            {
+                var currentItem = state.Mode == "Collection"
+                    ? state.Items[state.CurrentIndex]
+                    : state.CurrentIndex.ToString();
+                state.CurrentIndex++;
+
+                _logger.LogInformation($"Iterator [{state.CurrentIndex}/{(state.Mode == "Collection" ? state.Items.Count : state.TotalCount)}]: {currentItem}");
+                // Store current item as JSON output for downstream nodes
+                return ($"{{\"CurrentItem\":\"{currentItem}\",\"Index\":{state.CurrentIndex - 1}}}", "output_1");
+            }
+            else
+            {
+                _logger.LogInformation($"Iterator complete for {item.NodeId}. Routing to exit.");
+                _iteratorStates.TryRemove(stateKey, out _);
+                return ("Iteration Complete", "output_2");
+            }
+        }
+
+        private bool EvaluateCondition(string lhs, string op, string rhs)
+        {
+            if (lhs == null || op == null) return false;
+
+            // Try numeric comparison first
+            if (double.TryParse(lhs, out var lhsNum) && double.TryParse(rhs, out var rhsNum))
+            {
+                return op switch
+                {
+                    "Equals" => lhsNum == rhsNum,
+                    "NotEquals" => lhsNum != rhsNum,
+                    "GreaterThan" => lhsNum > rhsNum,
+                    "LessThan" => lhsNum < rhsNum,
+                    _ => false
+                };
+            }
+
+            // String comparison fallback
+            var comparison = string.Compare(lhs, rhs, StringComparison.OrdinalIgnoreCase);
+            return op switch
+            {
+                "Equals" => comparison == 0,
+                "NotEquals" => comparison != 0,
+                "GreaterThan" => comparison > 0,
+                "LessThan" => comparison < 0,
+                _ => false
+            };
+        }
+
+        /// <summary>
+        /// Resolves a NODE_OUTPUT parameter value from a preceding node's stored result.
+        /// The parameter value format is "nodeId.outputName" (set by the NODE_OUTPUT select in the UI).
+        /// </summary>
+        private string ResolveParameterFromResult(ExecutionQueueItem item, Guid executionId, string paramName)
+        {
+            var param = item.Parameters?.FirstOrDefault(p => p.Name == paramName);
+            if (param == null || string.IsNullOrEmpty(param.Value?.ToString())) return null;
+
+            // Value format: "nodeId.outputName"
+            var raw = param.Value.ToString();
+            var dotIndex = raw.IndexOf('.');
+            if (dotIndex < 0) return null;
+
+            var sourceNodeId = raw.Substring(0, dotIndex);
+            var outputName = raw.Substring(dotIndex + 1);
+
+            var sourceResult = _db.ExecutionResults.FindOne(r => r.ExecutionId == executionId && r.NodeId == sourceNodeId);
+            if (sourceResult == null)
+            {
+                _logger.LogWarning($"Result not found for source node {sourceNodeId}");
+                return null;
+            }
+
+            try
+            {
+                var outputs = JsonNode.Parse(sourceResult.Output);
+                return outputs?[outputName]?.ToString();
+            }
+            catch
+            {
+                // If output is not JSON, return raw
+                return sourceResult.Output;
+            }
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)

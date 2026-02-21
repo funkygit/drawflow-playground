@@ -100,13 +100,14 @@ public class HomeController : Controller
 
         // 3. Map to Meta DTO (Deduplicate by Name if necessary, but here we just project)
         return parameters.Select(p => new DrawflowPlayground.Models.NodeParameterMeta
-        {
-            Name = p.Name,
-            DisplayName = p.DisplayName ?? p.Name,
-            DataType = p.DataType,
-            Source = p.Source,
-            Value = p.Value
-        }).ToList();
+    {
+        Name = p.Name,
+        DisplayName = p.DisplayName ?? p.Name,
+        DataType = p.DataType,
+        Source = p.Source,
+        Value = p.Value,
+        AllowedValues = p.AllowedValues
+    }).ToList();
     }
 
     public IActionResult Privacy()

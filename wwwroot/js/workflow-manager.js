@@ -169,12 +169,12 @@ class WorkflowExecutor {
         return null;
     }
 
-    async handleNodeCompletion(nodeId) {
+    async handleNodeCompletion(nodeId, triggeredOutput = null) {
         this.nodeResults[nodeId] = "Completed";
-        await this._checkAndQueueChildren(nodeId);
+        await this._checkAndQueueChildren(nodeId, triggeredOutput);
     }
 
-    async _checkAndQueueChildren(completedNodeId) {
+    async _checkAndQueueChildren(completedNodeId, triggeredOutput = null) {
         const data = this.editor.export();
         if (!data.drawflow.Home || !data.drawflow.Home.data) return;
         
@@ -188,6 +188,9 @@ class WorkflowExecutor {
         const childrenIds = new Set();
         
         for (const key in outputs) {
+            // If triggeredOutput is set, only queue children from that specific output
+            if (triggeredOutput && key !== triggeredOutput) continue;
+
             const connections = outputs[key].connections;
             connections.forEach(conn => childrenIds.add(conn.node));
         }

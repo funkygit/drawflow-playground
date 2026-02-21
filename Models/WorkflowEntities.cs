@@ -182,5 +182,17 @@ namespace DrawflowPlayground.Models
         public string DataType { get; set; }
         public string Source { get; set; }
         public object Value { get; set; }
+        public List<string> AllowedValues { get; set; }
+    }
+
+    // --- Iterator State ---
+
+    public class IteratorState
+    {
+        public string Mode { get; set; } // "Collection" or "Count"
+        public List<string> Items { get; set; } // For Collection mode
+        public int TotalCount { get; set; } // For Count mode
+        public int CurrentIndex { get; set; }
+        public bool IsComplete => CurrentIndex >= (Mode == "Collection" ? Items?.Count ?? 0 : TotalCount);
     }
 }

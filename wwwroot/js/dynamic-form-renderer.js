@@ -34,7 +34,11 @@ class DynamicFormRenderer {
 
             switch (param.source) {
                 case 'USER_INPUT':
-                    inputElement = this.createInputField(param);
+                    if (param.allowedValues && param.allowedValues.length > 0) {
+                        inputElement = this.createSelectField(param);
+                    } else {
+                        inputElement = this.createInputField(param);
+                    }
                     break;
                 case 'CONSTANT':
                     inputElement = this.createReadOnlyField(param);
@@ -116,5 +120,26 @@ class DynamicFormRenderer {
 
         wrapper.appendChild(select);
         return wrapper;
+    }
+
+    createSelectField(param) {
+        const select = document.createElement('select');
+        select.className = 'form-select';
+        select.name = param.name;
+        select.dataset.name = param.name;
+        select.dataset.dataType = param.dataType;
+        select.dataset.source = param.source;
+
+        param.allowedValues.forEach(val => {
+            const option = document.createElement('option');
+            option.value = val;
+            option.innerText = val;
+            if (param.value && param.value === val) {
+                option.selected = true;
+            }
+            select.appendChild(option);
+        });
+
+        return select;
     }
 }

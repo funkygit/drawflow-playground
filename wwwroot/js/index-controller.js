@@ -58,14 +58,14 @@ function renderAvailableNodes() {
 
 fetchNodeMeta();
 
-connection.on("NodeStatusChanged", (executionId, nodeId, status) => {
+connection.on("NodeStatusChanged", (executionId, nodeId, status, triggeredOutput) => {
     // Filter for current execution
     if (currentExecutor && currentExecutor.executionId === executionId) {
-        log(`Node ${nodeId}: ${status}`);
+        log(`Node ${nodeId}: ${status}${triggeredOutput ? ' [' + triggeredOutput + ']' : ''}`);
         updateNodeVisuals(nodeId, status);
         
         if (status === "Completed") {
-            currentExecutor.handleNodeCompletion(nodeId);
+            currentExecutor.handleNodeCompletion(nodeId, triggeredOutput);
         }
     }
 });
@@ -132,9 +132,12 @@ function addNodeToDrawflow(type, posx, posy, nodeKey = null) {
             };
             html = `<div><strong>${meta.displayName}</strong><br/><small>${meta.nodeType}</small></div>`;
             
-            // Logic for IO based on type or defaults
-            if (meta.nodeTypeKey === 'input') inputs = 0;
-            if (meta.nodeTypeKey === 'output') outputs = 0;
+            // Derive input/output counts from variant metadata
+            const defaultVariant = meta.variants && meta.variants.length > 0 ? meta.variants[0] : null;
+            const outputCount = defaultVariant && defaultVariant.outputs ? defaultVariant.outputs.length : 1;
+
+            if (meta.nodeTypeKey === 'input') { inputs = 0; }
+            if (meta.nodeTypeKey === 'output' || meta.nodeKey === 'end') { outputs = 0; } else { outputs = outputCount; }
         }
     } else {
         if(type === 'start') { inputs = 0; outputs = 1; }
