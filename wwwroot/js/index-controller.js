@@ -11,7 +11,6 @@ const connection = new signalR.HubConnectionBuilder()
 let currentWorkflowId = null;
 let currentExecutor = null;
 let nodeMetaList = [];
-let currentFormRenderer = null;
 
 async function fetchNodeMeta() {
     try {
@@ -63,7 +62,7 @@ connection.on("NodeStatusChanged", (executionId, nodeId, status, triggeredOutput
     if (currentExecutor && currentExecutor.executionId === executionId) {
         log(`Node ${nodeId}: ${status}${triggeredOutput ? ' [' + triggeredOutput + ']' : ''}`);
         updateNodeVisuals(nodeId, status);
-        
+
         if (status === "Completed") {
             currentExecutor.handleNodeCompletion(nodeId, triggeredOutput);
         }
@@ -110,12 +109,203 @@ id.addEventListener('dragover', (ev) => {
     ev.preventDefault();
 });
 
-function addNodeToDrawflow(type, posx, posy, nodeKey = null) {
-    if(editor.editor_mode === 'fixed') return false;
-    posx = posx * ( editor.precanvas.clientWidth / (editor.precanvas.clientWidth * editor.zoom)) - (editor.precanvas.getBoundingClientRect().x * ( editor.precanvas.clientWidth / (editor.precanvas.clientWidth * editor.zoom)));
-    posy = posy * ( editor.precanvas.clientHeight / (editor.precanvas.clientHeight * editor.zoom)) - (editor.precanvas.getBoundingClientRect().y * ( editor.precanvas.clientHeight / (editor.precanvas.clientHeight * editor.zoom)));
+// ============================================================
+// Node Content HTML Builder
+// ============================================================
 
-    let inputs = 1; 
+/**
+ * Builds the full HTML content for a Drawflow node.
+ * Structure: parent-div.node-config-container > title-div > params-table
+ * @param {Object} meta - Node metadata from nodeMetaList
+ * @param {Object} data - Node data (nodeKey, selectedVariant, parameters, etc.)
+ * @param {string|number} nodeId - The Drawflow node ID (may not be known yet at creation time)
+ * @returns {string} HTML string for the node content
+ */
+function buildNodeContentHtml(meta, data, nodeId) {
+    const hasVariants = meta.variants && meta.variants.length > 1;
+    const selectedVariant = data.selectedVariant || (meta.variants && meta.variants.length > 0 ? meta.variants[0].value : null);
+
+    let html = `<div class="node-config-container" data-node-key="${meta.nodeKey}">`;
+
+    // Title row
+    html += `<div class="node-title">`;
+    html += `<span>${meta.displayName}</span>`;
+    html += `<span class="node-id-badge">#<span class="node-id-value">${nodeId || '?'}</span></span>`;
+    html += `</div>`;
+
+    // Variant selector (if multiple variants)
+    if (hasVariants) {
+        html += `<div class="node-variant-row">`;
+        html += `<label>${meta.variantSource || 'Variant'}</label>`;
+        html += `<select class="node-variant-select">`;
+        meta.variants.forEach(v => {
+            const selected = v.value === selectedVariant ? ' selected' : '';
+            html += `<option value="${v.value}"${selected}>${v.label}</option>`;
+        });
+        html += `</select>`;
+        html += `</div>`;
+    }
+
+    // Parameters container (will be populated by DynamicFormRenderer after node is created)
+    html += `<div class="node-params-container"></div>`;
+
+    // Previous connected nodes display
+    html += `<div class="node-prev-nodes">`;
+    html += `<div class="node-prev-nodes-label">Connected From:</div>`;
+    html += `<div class="node-prev-nodes-list"><span class="node-prev-nodes-empty">No connections</span></div>`;
+    html += `</div>`;
+
+    // Update data button
+    html += `<button class="node-update-btn" type="button">Update</button>`;
+
+    html += `</div>`;
+    return html;
+}
+
+/**
+ * Renders the parameter table inside a node's content using DynamicFormRenderer.
+ * Also populates existing values from data.parameters.
+ */
+function renderNodeParams(nodeId, data, meta) {
+    const nodeEl = document.getElementById(`node-${nodeId}`);
+    if (!nodeEl) return;
+
+    const paramsContainer = nodeEl.querySelector('.node-params-container');
+    if (!paramsContainer) return;
+
+    const renderer = new DynamicFormRenderer(meta, (requiredType) => {
+        return findConnectedPreviousNodes(nodeId, requiredType);
+    });
+
+    renderer.renderAllVariantsTable(paramsContainer, data.selectedVariant, (requiredType) => {
+        return findConnectedPreviousNodes(nodeId, requiredType);
+    });
+
+    // Populate existing values if any
+    if (data.parameters) {
+        Object.keys(data.parameters).forEach(key => {
+            const el = paramsContainer.querySelector(`[name="${key}"]`);
+            if (el) el.value = data.parameters[key];
+        });
+    }
+}
+
+/**
+ * Updates the "Connected From" section of a node to show connected predecessor nodes.
+ */
+function refreshPreviousNodes(nodeId) {
+    const nodeEl = document.getElementById(`node-${nodeId}`);
+    if (!nodeEl) return;
+
+    const listEl = nodeEl.querySelector('.node-prev-nodes-list');
+    if (!listEl) return;
+
+    const connectedNodes = getConnectedInputNodes(nodeId);
+
+    if (connectedNodes.length === 0) {
+        listEl.innerHTML = '<span class="node-prev-nodes-empty">No connections</span>';
+    } else {
+        listEl.innerHTML = '';
+        connectedNodes.forEach(cn => {
+            const badge = document.createElement('span');
+            badge.className = 'node-prev-badge';
+            badge.textContent = cn.displayName;
+            listEl.appendChild(badge);
+        });
+    }
+}
+
+/**
+ * Gets the list of nodes connected as inputs to the given node.
+ * Returns array of { nodeId, displayName }
+ */
+function getConnectedInputNodes(nodeId) {
+    const data = editor.export();
+    if (!data.drawflow.Home || !data.drawflow.Home.data) return [];
+
+    const nodes = data.drawflow.Home.data;
+    const currentNode = nodes[nodeId];
+    if (!currentNode || !currentNode.inputs) return [];
+
+    const connected = [];
+    const seenIds = new Set();
+
+    for (const inputKey in currentNode.inputs) {
+        const connections = currentNode.inputs[inputKey].connections;
+        if (connections) {
+            connections.forEach(conn => {
+                if (seenIds.has(conn.node)) return;
+                seenIds.add(conn.node);
+
+                const sourceNode = nodes[conn.node];
+                let displayName = `Node #${conn.node}`;
+                if (sourceNode && sourceNode.data && sourceNode.data.displayName) {
+                    displayName = sourceNode.data.displayName;
+                }
+                connected.push({ nodeId: conn.node, displayName });
+            });
+        }
+    }
+    return connected;
+}
+
+/**
+ * Finds previous nodes connected to currentNodeId that output the requiredType.
+ * Only considers nodes with actual Drawflow connections into the current node.
+ */
+function findConnectedPreviousNodes(currentNodeId, requiredType) {
+    const data = editor.export();
+    if (!data.drawflow.Home || !data.drawflow.Home.data) return [];
+
+    const nodes = data.drawflow.Home.data;
+    const currentNode = nodes[currentNodeId];
+    if (!currentNode || !currentNode.inputs) return [];
+
+    const compatible = [];
+    const seenIds = new Set();
+
+    // Get all connected input node IDs
+    for (const inputKey in currentNode.inputs) {
+        const connections = currentNode.inputs[inputKey].connections;
+        if (connections) {
+            connections.forEach(conn => seenIds.add(conn.node));
+        }
+    }
+
+    // Check each connected node for matching output types
+    seenIds.forEach(sourceId => {
+        const sourceNode = nodes[sourceId];
+        if (!sourceNode || !sourceNode.data || !sourceNode.data.nodeKey) return;
+
+        const meta = nodeMetaList.find(m => m.nodeKey === sourceNode.data.nodeKey);
+        const variant = meta?.variants.find(v => v.value === sourceNode.data.selectedVariant);
+
+        if (variant && variant.outputs) {
+            variant.outputs.forEach(output => {
+                if (output.dataType === requiredType) {
+                    compatible.push({
+                        nodeId: sourceId,
+                        outputName: output.name,
+                        label: `${sourceNode.data.displayName} (${output.name})`
+                    });
+                }
+            });
+        }
+    });
+
+    return compatible;
+}
+
+// ============================================================
+// Add Node to Drawflow
+// ============================================================
+
+function addNodeToDrawflow(type, posx, posy, nodeKey = null) {
+    if (editor.editor_mode === 'fixed') return false;
+    posx = posx * (editor.precanvas.clientWidth / (editor.precanvas.clientWidth * editor.zoom)) - (editor.precanvas.getBoundingClientRect().x * (editor.precanvas.clientWidth / (editor.precanvas.clientWidth * editor.zoom)));
+    posy = posy * (editor.precanvas.clientHeight / (editor.precanvas.clientHeight * editor.zoom)) - (editor.precanvas.getBoundingClientRect().y * (editor.precanvas.clientHeight / (editor.precanvas.clientHeight * editor.zoom)));
+
+    let inputs = 1;
     let outputs = 1;
     let html = `<div>${type.toUpperCase()}</div>`;
     let data = { name: type };
@@ -123,15 +313,17 @@ function addNodeToDrawflow(type, posx, posy, nodeKey = null) {
     if (nodeKey) {
         const meta = nodeMetaList.find(m => m.nodeKey === nodeKey);
         if (meta) {
-            data = { 
+            data = {
                 nodeKey: nodeKey,
                 displayName: meta.displayName,
                 nodeType: meta.nodeType,
                 selectedVariant: meta.variants && meta.variants.length > 0 ? meta.variants[0].value : null,
                 parameters: {} // To be filled by config
             };
-            html = `<div><strong>${meta.displayName}</strong><br/><small>${meta.nodeType}</small></div>`;
-            
+
+            // Build the rich in-node HTML (nodeId not yet known, will be patched)
+            html = buildNodeContentHtml(meta, data, '?');
+
             // Derive input/output counts from variant metadata
             const defaultVariant = meta.variants && meta.variants.length > 0 ? meta.variants[0] : null;
 
@@ -145,17 +337,105 @@ function addNodeToDrawflow(type, posx, posy, nodeKey = null) {
             if (meta.nodeTypeKey === 'output' || meta.nodeKey === 'end') { outputs = 0; }
         }
     } else {
-        if(type === 'start') { inputs = 0; outputs = 1; }
-        if(type === 'end') { inputs = 1; outputs = 0; }
-        if(type === 'loop') { inputs = 1; outputs = 1; }
-        if(type === 'conditional') { inputs = 1; outputs = 2; }
-        if(type === 'iterator') { inputs = 1; outputs = 2; }
+        if (type === 'start') { inputs = 0; outputs = 1; }
+        if (type === 'end') { inputs = 1; outputs = 0; }
+        if (type === 'loop') { inputs = 1; outputs = 1; }
+        if (type === 'conditional') { inputs = 1; outputs = 2; }
+        if (type === 'iterator') { inputs = 1; outputs = 2; }
     }
 
-    editor.addNode(type, inputs, outputs, posx, posy, type, data, html);
+    const newNodeId = editor.addNode(type, inputs, outputs, posx, posy, type, data, html);
+
+    // After creation, patch the node ID into the content and render params
+    if (nodeKey) {
+        const meta = nodeMetaList.find(m => m.nodeKey === nodeKey);
+        if (meta) {
+            // Patch the node ID badge
+            const nodeEl = document.getElementById(`node-${newNodeId}`);
+            if (nodeEl) {
+                const idBadge = nodeEl.querySelector('.node-id-value');
+                if (idBadge) idBadge.textContent = newNodeId;
+            }
+
+            // Render parameters table
+            renderNodeParams(newNodeId, data, meta);
+
+            // Attach event listeners
+            attachNodeEventListeners(newNodeId, data, meta);
+        }
+    }
 }
 
+/**
+ * Attaches interactive event listeners to the in-node controls.
+ */
+function attachNodeEventListeners(nodeId, data, meta) {
+    const nodeEl = document.getElementById(`node-${nodeId}`);
+    if (!nodeEl) return;
+
+    // Variant selector change
+    const variantSelect = nodeEl.querySelector('.node-variant-select');
+    if (variantSelect) {
+        variantSelect.addEventListener('change', (e) => {
+            e.stopPropagation();
+            data.selectedVariant = e.target.value;
+
+            // Toggle parameter row visibility
+            const paramsContainer = nodeEl.querySelector('.node-params-container');
+            if (paramsContainer) {
+                const renderer = new DynamicFormRenderer(meta, () => []);
+                renderer.toggleVariantVisibility(paramsContainer, data.selectedVariant);
+            }
+
+            log(`Node ${nodeId}: Variant changed to ${data.selectedVariant}`);
+        });
+    }
+
+    // Update button
+    const updateBtn = nodeEl.querySelector('.node-update-btn');
+    if (updateBtn) {
+        updateBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            updateNodeDataFromContent(nodeId);
+        });
+    }
+
+    // Prevent click propagation on inputs/selects so Drawflow doesn't interfere
+    nodeEl.querySelectorAll('input, select, button').forEach(el => {
+        el.addEventListener('mousedown', (e) => e.stopPropagation());
+        el.addEventListener('click', (e) => e.stopPropagation());
+    });
+}
+
+// ============================================================
+// Update Node Data from In-Node Content
+// ============================================================
+
+function updateNodeDataFromContent(nodeId) {
+    const node = editor.getNodeFromId(nodeId);
+    if (!node || !node.data) return;
+
+    const nodeEl = document.getElementById(`node-${nodeId}`);
+    if (!nodeEl) return;
+
+    const paramsContainer = nodeEl.querySelector('.node-params-container');
+    if (!paramsContainer) return;
+
+    const inputs = paramsContainer.querySelectorAll('input, select');
+    node.data.parameters = {};
+    inputs.forEach(input => {
+        if (input.name) {
+            node.data.parameters[input.name] = input.value;
+        }
+    });
+
+    log(`Updated Node ${nodeId} data`);
+}
+
+// ============================================================
 // API Calls
+// ============================================================
+
 async function saveWorkflow() {
     const data = editor.export();
     const workflow = {
@@ -178,13 +458,13 @@ async function runWorkflow() {
     if (!currentWorkflowId) {
         await saveWorkflow();
     }
-    
+
     // Reset Visuals
     document.querySelectorAll('.node-status').forEach(el => el.remove());
 
     const executionId = await connection.invoke("StartWorkflow", currentWorkflowId, null);
     log(`Started Execution: ${executionId}`);
-    
+
     await connection.invoke("JoinWorkflowGroup", executionId);
 
     // Init Executor
@@ -201,114 +481,42 @@ async function runWorkflow() {
     await currentExecutor.start();
 }
 
-// Node Selection & Config
-editor.on('nodeSelected', (id) => {
-    const node = editor.getNodeFromId(id);
-    if (node.data && node.data.nodeKey) {
-        showNodeConfig(id, node.data);
-    } else {
-        hideNodeConfig();
+// ============================================================
+// Connection Events — Refresh Previous Nodes Display
+// ============================================================
+
+editor.on('connectionCreated', (connection) => {
+    // connection = { output_id, input_id, output_class, input_class }
+    refreshPreviousNodes(connection.input_id);
+
+    // Also re-render params for the target node (to refresh NODE_OUTPUT selects)
+    const node = editor.getNodeFromId(connection.input_id);
+    if (node && node.data && node.data.nodeKey) {
+        const meta = nodeMetaList.find(m => m.nodeKey === node.data.nodeKey);
+        if (meta) {
+            renderNodeParams(connection.input_id, node.data, meta);
+            attachNodeEventListeners(connection.input_id, node.data, meta);
+        }
     }
 });
 
-editor.on('nodeUnselected', () => hideNodeConfig());
+editor.on('connectionRemoved', (connection) => {
+    refreshPreviousNodes(connection.input_id);
 
-function showNodeConfig(nodeId, data) {
-    const panel = document.getElementById('node-config-panel');
-    const meta = nodeMetaList.find(m => m.nodeKey === data.nodeKey);
-    
-    if (!meta) return;
-
-    panel.style.display = 'block';
-    document.getElementById('config-node-name').innerText = meta.displayName;
-    document.getElementById('config-node-id').innerText = `(#${nodeId})`;
-
-    // Setup Variant Selector
-    const selector = document.getElementById('variant-selector');
-    selector.innerHTML = '';
-    meta.variants.forEach(v => {
-        const opt = document.createElement('option');
-        opt.value = v.value;
-        opt.innerText = v.label;
-        if (v.value === data.selectedVariant) opt.selected = true;
-        selector.appendChild(opt);
-    });
-
-    selector.onchange = (e) => {
-        data.selectedVariant = e.target.value;
-        renderParams(nodeId, data, meta);
-    };
-
-    renderParams(nodeId, data, meta);
-}
-
-function renderParams(nodeId, data, meta) {
-    const container = document.getElementById('dynamic-form-container');
-    
-    currentFormRenderer = new DynamicFormRenderer(meta, (requiredType) => {
-        // Find previous nodes that output matching type
-        return findCompatiblePreviousNodes(nodeId, requiredType);
-    });
-
-    currentFormRenderer.renderVariantForm(data.selectedVariant, container);
-
-    // Populate existing values if any
-    if (data.parameters) {
-        Object.keys(data.parameters).forEach(key => {
-            const el = container.querySelector(`[name="${key}"]`);
-            if (el) el.value = data.parameters[key];
-        });
+    // Re-render params for the target node
+    const node = editor.getNodeFromId(connection.input_id);
+    if (node && node.data && node.data.nodeKey) {
+        const meta = nodeMetaList.find(m => m.nodeKey === node.data.nodeKey);
+        if (meta) {
+            renderNodeParams(connection.input_id, node.data, meta);
+            attachNodeEventListeners(connection.input_id, node.data, meta);
+        }
     }
-}
+});
 
-function findCompatiblePreviousNodes(currentNodeId, requiredType) {
-    const nodes = editor.export().drawflow.Home.data;
-    const compatible = [];
-
-    Object.keys(nodes).forEach(id => {
-        if (id == currentNodeId) return; // Skip self
-
-        const node = nodes[id];
-        if (node.data && node.data.nodeKey) {
-            const meta = nodeMetaList.find(m => m.nodeKey === node.data.nodeKey);
-            const variant = meta?.variants.find(v => v.value === node.data.selectedVariant);
-            
-            if (variant && variant.outputs) {
-                variant.outputs.forEach(output => {
-                    if (output.dataType === requiredType) {
-                        compatible.push({
-                            nodeId: id,
-                            outputName: output.name,
-                            label: `${node.data.displayName} (${output.name})`
-                        });
-                    }
-                });
-            }
-        }
-    });
-
-    return compatible;
-}
-
-function updateNodeData() {
-    const nodeId = document.getElementById('config-node-id').innerText.replace(/[()#]/g, '');
-    const data = editor.getNodeFromId(nodeId).data;
-    const container = document.getElementById('dynamic-form-container');
-
-    const inputs = container.querySelectorAll('input, select');
-    data.parameters = {};
-    inputs.forEach(input => {
-        if (input.name) {
-            data.parameters[input.name] = input.value;
-        }
-    });
-
-    log(`Updated Node ${nodeId} data`);
-}
-
-function hideNodeConfig() {
-    document.getElementById('node-config-panel').style.display = 'none';
-}
+// ============================================================
+// Logging
+// ============================================================
 
 function log(msg) {
     const logDiv = document.getElementById('log');
