@@ -134,10 +134,15 @@ function addNodeToDrawflow(type, posx, posy, nodeKey = null) {
             
             // Derive input/output counts from variant metadata
             const defaultVariant = meta.variants && meta.variants.length > 0 ? meta.variants[0] : null;
-            const outputCount = defaultVariant && defaultVariant.outputs ? defaultVariant.outputs.length : 1;
 
+            // Control nodes (Conditional, Iterator) use outputs.length for multiple execution ports
+            // Processing nodes always get 1 output port (data outputs are fields within a single result)
+            if (meta.nodeTypeKey === 'control') {
+                const outputCount = defaultVariant && defaultVariant.outputs ? defaultVariant.outputs.length : 0;
+                outputs = outputCount;
+            }
             if (meta.nodeTypeKey === 'input') { inputs = 0; }
-            if (meta.nodeTypeKey === 'output' || meta.nodeKey === 'end') { outputs = 0; } else { outputs = outputCount; }
+            if (meta.nodeTypeKey === 'output' || meta.nodeKey === 'end') { outputs = 0; }
         }
     } else {
         if(type === 'start') { inputs = 0; outputs = 1; }

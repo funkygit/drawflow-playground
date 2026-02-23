@@ -305,5 +305,86 @@
                 ]
             }
         ]
+    },
+    {
+        "NodeKey": "tcp_server",
+        "DisplayName": "TCP Server",
+        "NodeType": "IO",
+        "NodeTypeKey": "io",
+        "NodeTypeOrder": 4,
+        "ExecutionMode": "LongRunning",
+        "DllPath": "External/NetworkTools.dll",
+        "VariantSource": null,
+        "Lifecycle": {
+            "OnStart": {
+                "MethodName": "StartListening",
+                "Parameters": [
+                    {
+                        "Name": "port",
+                        "DisplayName": "Port",
+                        "Order": 1,
+                        "DataType": "System.Int32",
+                        "Source": "USER_INPUT",
+                        "Value": 9000
+                    }
+                ]
+            },
+            "OnEvent": {
+                "MethodName": "OnDataReceived",
+                "Emits": [
+                    "DataReceived"
+                ]
+            },
+            "OnStop": {
+                "MethodName": "StopListening"
+            }
+        },
+        "Variants": [
+            {
+                "Value": "default",
+                "Label": "TCP Server",
+                "TypeName": "NetworkTools.TcpServer",
+                "Constructor": {
+                    "Parameters": [
+                        {
+                            "Name": "host",
+                            "DisplayName": "Host Address",
+                            "Order": 1,
+                            "DataType": "System.String",
+                            "Source": "USER_INPUT",
+                            "Value": "0.0.0.0"
+                        },
+                        {
+                            "Name": "port",
+                            "DisplayName": "Port",
+                            "Order": 2,
+                            "DataType": "System.Int32",
+                            "Source": "USER_INPUT",
+                            "Value": 9000
+                        },
+                        {
+                            "Name": "bufferSize",
+                            "DisplayName": "Buffer Size (bytes)",
+                            "Order": 3,
+                            "DataType": "System.Int32",
+                            "Source": "USER_INPUT",
+                            "Value": 4096
+                        }
+                    ]
+                },
+                "Outputs": [
+                    {
+                        "Name": "ReceivedData",
+                        "DataType": "System.String",
+                        "Description": "Data received from connected client"
+                    },
+                    {
+                        "Name": "ClientAddress",
+                        "DataType": "System.String",
+                        "Description": "IP address of the connected client"
+                    }
+                ]
+            }
+        ]
     }
 ]

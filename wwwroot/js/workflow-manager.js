@@ -22,9 +22,18 @@ class WorkflowExecutor {
         // Queue Start Nodes
         for (const nodeId in nodes) {
             const node = nodes[nodeId];
-            const inputCount = Object.keys(node.inputs).length;
-            // Convention: Start nodes have no inputs OR are explicitly named 'start'
-            if (inputCount === 0 || node.name.toLowerCase() === 'start') {
+			
+            // Check if there are any active incoming connections
+            let hasIncomingConnections = false;
+            for (const inputKey in node.inputs) {
+                if (node.inputs[inputKey].connections && node.inputs[inputKey].connections.length > 0) {
+                    hasIncomingConnections = true;
+                    break;
+                }
+            }
+			
+            // Convention: Start nodes have no incoming connections OR are explicitly named 'start'
+            if (!hasIncomingConnections || node.name.toLowerCase() === 'start') {
                 this.log(`Queueing Start Node ${nodeId}...`);
                 const queueItem = this.buildQueueItem(nodeId, nodes);
                 await this.connection.invoke("QueueNode", queueItem);
