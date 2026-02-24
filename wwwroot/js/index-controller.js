@@ -322,6 +322,41 @@ function addNodeToDrawflow(type, posx, posy, nodeKey = null) {
 }
 
 /**
+ * Finds all downstream nodes connected to a given node's outputs
+ * and re-renders their parameter forms so NODE_OUTPUT selects are refreshed.
+ */
+function refreshDownstreamNodes(sourceNodeId) {
+    const exportData = editor.export();
+    if (!exportData.drawflow.Home || !exportData.drawflow.Home.data) return;
+
+    const nodes = exportData.drawflow.Home.data;
+    const sourceNode = nodes[sourceNodeId];
+    if (!sourceNode || !sourceNode.outputs) return;
+
+    // Collect all node IDs connected to this node's outputs
+    const downstreamIds = new Set();
+    for (const outputKey in sourceNode.outputs) {
+        const connections = sourceNode.outputs[outputKey].connections;
+        if (connections) {
+            connections.forEach(conn => downstreamIds.add(conn.node));
+        }
+    }
+
+    // Re-render params for each downstream node
+    downstreamIds.forEach(downstreamId => {
+        const node = editor.getNodeFromId(downstreamId);
+        if (node && node.data && node.data.nodeKey) {
+            const meta = nodeMetaList.find(m => m.nodeKey === node.data.nodeKey);
+            if (meta) {
+                updateNodeDataFromContent(downstreamId); // Preserve existing values
+                renderNodeParams(downstreamId, node.data, meta);
+                attachNodeEventListeners(downstreamId, node.data, meta);
+            }
+        }
+    });
+}
+
+/**
  * Attaches interactive event listeners to the in-node controls.
  */
 function attachNodeEventListeners(nodeId, data, meta) {
@@ -341,6 +376,9 @@ function attachNodeEventListeners(nodeId, data, meta) {
                 const renderer = new DynamicFormRenderer(meta, () => []);
                 renderer.toggleVariantVisibility(paramsContainer, data.selectedVariant);
             }
+
+            // Refresh downstream nodes so their NODE_OUTPUT selects reflect the new outputs
+            refreshDownstreamNodes(nodeId);
 
             log(`Node ${nodeId}: Variant changed to ${data.selectedVariant}`);
         });
