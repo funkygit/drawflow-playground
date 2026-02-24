@@ -8,8 +8,8 @@ namespace DrawflowPlayground.Models
     {
         [BsonId]
         public Guid Id { get; set; }
-        public string Name { get; set; }
-        public string JsonData { get; set; } // Raw Drawflow JSON
+        public required string Name { get; set; }
+        public required string JsonData { get; set; } // Raw Drawflow JSON
     }
 
     public class WorkflowExecution
@@ -106,12 +106,19 @@ namespace DrawflowPlayground.Models
         public object IsRequired { get; set; } // specific parsing logic needed
         public string Source { get; set; }
         public object Value { get; set; } // Constant value from config
-        public object DefaultValue { get; set; } 
+        public object DefaultValue { get; set; }
+        public VisibleWhenCondition VisibleWhen { get; set; }
         
         [System.Text.Json.Serialization.JsonIgnore]
         public bool HasDefaultValue => DefaultValue != null;
         [System.Text.Json.Serialization.JsonIgnore]
         public Type ParameterType => Type.GetType(DataType) ?? typeof(object);
+    }
+
+    public class VisibleWhenCondition
+    {
+        public string Field { get; set; }
+        public string Value { get; set; }
     }
     
     public class ParameterRequirement
@@ -188,6 +195,7 @@ namespace DrawflowPlayground.Models
         public string Source { get; set; }
         public object Value { get; set; }
         public List<string> AllowedValues { get; set; }
+        public VisibleWhenCondition VisibleWhen { get; set; }
     }
 
     // --- Iterator State ---

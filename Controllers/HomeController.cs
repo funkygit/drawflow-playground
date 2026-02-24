@@ -55,6 +55,8 @@ public class HomeController : Controller
         var json = System.IO.File.ReadAllText(path);
         var configs = System.Text.Json.JsonSerializer.Deserialize<List<DrawflowPlayground.Models.NodeConfiguration>>(json, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
+        if (configs == null) return BadRequest("Failed to deserialize node configurations.");
+
         var metaList = MapNodesToMeta(configs);
 
         return Ok(metaList);
@@ -76,11 +78,11 @@ public class HomeController : Controller
                 Label = v.Label,
                 Parameters = FlattenParameters(v),
                 Outputs = v.Outputs
-            }).ToList()
-        }).ToList() ?? new List<DrawflowPlayground.Models.NodeMeta>();
+            }).ToList() ?? []
+        }).ToList() ?? [];
     }
 
-    private List<DrawflowPlayground.Models.NodeParameterMeta> FlattenParameters(DrawflowPlayground.Models.NodeVariant variant)
+    private static List<DrawflowPlayground.Models.NodeParameterMeta> FlattenParameters(DrawflowPlayground.Models.NodeVariant variant)
     {
         var parameters = new List<DrawflowPlayground.Models.NodeParameter>();
         
@@ -106,7 +108,8 @@ public class HomeController : Controller
         DataType = p.DataType,
         Source = p.Source,
         Value = p.Value,
-        AllowedValues = p.AllowedValues
+        AllowedValues = p.AllowedValues,
+        VisibleWhen = p.VisibleWhen
     }).ToList();
     }
 

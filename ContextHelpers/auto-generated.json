@@ -128,7 +128,11 @@
                             "DisplayName": "Source Collection",
                             "Order": 2,
                             "DataType": "System.Object",
-                            "Source": "NODE_OUTPUT"
+                            "Source": "NODE_OUTPUT",
+                            "VisibleWhen": {
+                                "Field": "iterationMode",
+                                "Value": "Collection"
+                            }
                         },
                         {
                             "Name": "count",
@@ -136,7 +140,11 @@
                             "Order": 3,
                             "DataType": "System.Int32",
                             "Source": "USER_INPUT",
-                            "Value": 1
+                            "Value": 1,
+                            "VisibleWhen": {
+                                "Field": "iterationMode",
+                                "Value": "Count"
+                            }
                         }
                     ]
                 },

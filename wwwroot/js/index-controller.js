@@ -203,11 +203,27 @@ function findConnectedPreviousNodes(currentNodeId, requiredType) {
     const compatible = [];
     const seenIds = new Set();
 
-    // Get all connected input node IDs
-    for (const inputKey in currentNode.inputs) {
-        const connections = currentNode.inputs[inputKey].connections;
-        if (connections) {
-            connections.forEach(conn => seenIds.add(conn.node));
+    // BFS to collect ALL ancestor node IDs (not just immediate parents)
+    const queue = [currentNodeId];
+    const visited = new Set([String(currentNodeId)]);
+
+    while (queue.length > 0) {
+        const nodeId = queue.shift();
+        const node = nodes[nodeId];
+        if (!node || !node.inputs) continue;
+
+        for (const inputKey in node.inputs) {
+            const connections = node.inputs[inputKey].connections;
+            if (connections) {
+                connections.forEach(conn => {
+                    const id = String(conn.node);
+                    if (!visited.has(id)) {
+                        visited.add(id);
+                        seenIds.add(conn.node);
+                        queue.push(conn.node);
+                    }
+                });
+            }
         }
     }
 

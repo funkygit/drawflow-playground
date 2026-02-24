@@ -91,10 +91,17 @@ class DynamicFormRenderer {
             tr.className = 'node-param-row';
             // Store all variants this param belongs to
             tr.dataset.variants = JSON.stringify([...variants]);
+            tr.dataset.paramName = paramName;
 
             // Check if this row should be visible
             if (!variants.has(selectedVariant)) {
                 tr.classList.add('variant-hidden');
+            }
+
+            // Store VisibleWhen condition if present
+            if (param.visibleWhen) {
+                tr.dataset.visibleWhenField = param.visibleWhen.field;
+                tr.dataset.visibleWhenValue = param.visibleWhen.value;
             }
 
             // Label cell
@@ -132,6 +139,9 @@ class DynamicFormRenderer {
 
         table.appendChild(tbody);
         container.appendChild(table);
+
+        // Apply conditional visibility (VisibleWhen)
+        this._applyConditionalVisibility(container);
     }
 
     /**
@@ -148,6 +158,50 @@ class DynamicFormRenderer {
             } else {
                 row.classList.add('variant-hidden');
             }
+        });
+
+        // Re-apply conditional visibility after variant change
+        this._applyConditionalVisibility(container);
+    }
+
+    /**
+     * Applies conditional visibility based on VisibleWhen rules.
+     * Rows with data-visible-when-field are shown/hidden based on the
+     * current value of the controlling field.
+     * Also attaches change listeners for dynamic toggling.
+     */
+    _applyConditionalVisibility(container) {
+        const conditionalRows = container.querySelectorAll('[data-visible-when-field]');
+        if (conditionalRows.length === 0) return;
+
+        // Collect controlling field names
+        const controllingFields = new Set();
+        conditionalRows.forEach(row => controllingFields.add(row.dataset.visibleWhenField));
+
+        // For each controlling field, find its input element and apply visibility
+        controllingFields.forEach(fieldName => {
+            const controllingInput = container.querySelector(`[name="${fieldName}"]`);
+            if (!controllingInput) return;
+
+            const applyVisibility = () => {
+                const currentValue = controllingInput.value;
+                conditionalRows.forEach(row => {
+                    if (row.dataset.visibleWhenField !== fieldName) return;
+                    if (row.dataset.visibleWhenValue === currentValue) {
+                        row.classList.remove('condition-hidden');
+                    } else {
+                        row.classList.add('condition-hidden');
+                    }
+                });
+            };
+
+            // Apply immediately
+            applyVisibility();
+
+            // Attach change listener (remove previous to avoid duplicates)
+            controllingInput.removeEventListener('change', controllingInput._visibilityHandler);
+            controllingInput._visibilityHandler = applyVisibility;
+            controllingInput.addEventListener('change', applyVisibility);
         });
     }
 
