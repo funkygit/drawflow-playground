@@ -149,11 +149,7 @@ function buildNodeContentHtml(meta, data, nodeId) {
     // Parameters container (will be populated by DynamicFormRenderer after node is created)
     html += `<div class="node-params-container"></div>`;
 
-    // Previous connected nodes display
-    html += `<div class="node-prev-nodes">`;
-    html += `<div class="node-prev-nodes-label">Connected From:</div>`;
-    html += `<div class="node-prev-nodes-list"><span class="node-prev-nodes-empty">No connections</span></div>`;
-    html += `</div>`;
+    // Previous connected nodes display removed as it is handled via NODE_OUTPUT dropdowns
 
     // Update data button
     html += `<button class="node-update-btn" type="button">Update</button>`;
@@ -190,64 +186,7 @@ function renderNodeParams(nodeId, data, meta) {
     }
 }
 
-/**
- * Updates the "Connected From" section of a node to show connected predecessor nodes.
- */
-function refreshPreviousNodes(nodeId) {
-    const nodeEl = document.getElementById(`node-${nodeId}`);
-    if (!nodeEl) return;
 
-    const listEl = nodeEl.querySelector('.node-prev-nodes-list');
-    if (!listEl) return;
-
-    const connectedNodes = getConnectedInputNodes(nodeId);
-
-    if (connectedNodes.length === 0) {
-        listEl.innerHTML = '<span class="node-prev-nodes-empty">No connections</span>';
-    } else {
-        listEl.innerHTML = '';
-        connectedNodes.forEach(cn => {
-            const badge = document.createElement('span');
-            badge.className = 'node-prev-badge';
-            badge.textContent = cn.displayName;
-            listEl.appendChild(badge);
-        });
-    }
-}
-
-/**
- * Gets the list of nodes connected as inputs to the given node.
- * Returns array of { nodeId, displayName }
- */
-function getConnectedInputNodes(nodeId) {
-    const data = editor.export();
-    if (!data.drawflow.Home || !data.drawflow.Home.data) return [];
-
-    const nodes = data.drawflow.Home.data;
-    const currentNode = nodes[nodeId];
-    if (!currentNode || !currentNode.inputs) return [];
-
-    const connected = [];
-    const seenIds = new Set();
-
-    for (const inputKey in currentNode.inputs) {
-        const connections = currentNode.inputs[inputKey].connections;
-        if (connections) {
-            connections.forEach(conn => {
-                if (seenIds.has(conn.node)) return;
-                seenIds.add(conn.node);
-
-                const sourceNode = nodes[conn.node];
-                let displayName = `Node #${conn.node}`;
-                if (sourceNode && sourceNode.data && sourceNode.data.displayName) {
-                    displayName = sourceNode.data.displayName;
-                }
-                connected.push({ nodeId: conn.node, displayName });
-            });
-        }
-    }
-    return connected;
-}
 
 /**
  * Finds previous nodes connected to currentNodeId that output the requiredType.
@@ -282,7 +221,7 @@ function findConnectedPreviousNodes(currentNodeId, requiredType) {
 
         if (variant && variant.outputs) {
             variant.outputs.forEach(output => {
-                if (output.dataType === requiredType) {
+                if (output.dataType === requiredType || requiredType === 'System.Object') {
                     compatible.push({
                         nodeId: sourceId,
                         outputName: output.name,
@@ -482,14 +421,14 @@ async function runWorkflow() {
 }
 
 // ============================================================
-// Connection Events — Refresh Previous Nodes Display
+// Connection Events — Refresh NODE_OUTPUT Selects
 // ============================================================
 
 editor.on('connectionCreated', (connection) => {
     // connection = { output_id, input_id, output_class, input_class }
-    refreshPreviousNodes(connection.input_id);
+    updateNodeDataFromContent(connection.input_id); // Save existing input values before re-rendering
 
-    // Also re-render params for the target node (to refresh NODE_OUTPUT selects)
+    // Re-render params for the target node (to refresh NODE_OUTPUT selects)
     const node = editor.getNodeFromId(connection.input_id);
     if (node && node.data && node.data.nodeKey) {
         const meta = nodeMetaList.find(m => m.nodeKey === node.data.nodeKey);
@@ -501,7 +440,8 @@ editor.on('connectionCreated', (connection) => {
 });
 
 editor.on('connectionRemoved', (connection) => {
-    refreshPreviousNodes(connection.input_id);
+    // connection = { output_id, input_id, output_class, input_class }
+    updateNodeDataFromContent(connection.input_id); // Save existing input values before re-rendering
 
     // Re-render params for the target node
     const node = editor.getNodeFromId(connection.input_id);
