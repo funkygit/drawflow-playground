@@ -1,0 +1,55 @@
+[
+    {
+        "NodeKey": "calculator",
+        "DisplayName": "Calculator",
+        "NodeType": "Processing",
+        "NodeTypeKey": "processing",
+        "NodeTypeOrder": 1,
+        "ExecutionMode": "Transient",
+        "DllPath": "SampleDll.dll",
+        "Variants": [
+            {
+                "Value": "default",
+                "Label": "Simple Calculator",
+                "TypeName": "SampleDll.Calculator",
+                "Constructor": {
+                    "Parameters": [
+                        {
+                            "Name": "a",
+                            "DisplayName": "First Number",
+                            "Order": 1,
+                            "DataType": "System.Int32",
+                            "Source": "USER_INPUT",
+                            "Value": 5
+                        },
+                        {
+                            "Name": "b",
+                            "DisplayName": "Second Number",
+                            "Order": 2,
+                            "DataType": "System.Int32",
+                            "Source": "USER_INPUT",
+                            "Value": 3
+                        }
+                    ]
+                },
+                "ExecutionFlow": [
+                    {
+                        "Sequence": 1,
+                        "MethodName": "Add"
+                    },
+                    {
+                        "Sequence": 2,
+                        "MethodName": "Multiply"
+                    }
+                ],
+                "Outputs": [
+                    {
+                        "Name": "Result",
+                        "DataType": "System.Int32",
+                        "Description": "The result of the last operation"
+                    }
+                ]
+            }
+        ]
+    }
+]

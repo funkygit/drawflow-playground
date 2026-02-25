@@ -11,4 +11,28 @@
     <PackageReference Include="LiteDB" Version="5.0.21" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="DrawflowPlayground.Shared\DrawflowPlayground.Shared.csproj" />
+  </ItemGroup>
+
+  <!-- Exclude files that are now in the shared library to avoid duplicate compilation -->
+  <!-- Also exclude nested project directories since they are subdirs of this project -->
+  <ItemGroup>
+    <Compile Remove="Models\WorkflowEntities.cs" />
+    <Compile Remove="Utilities\DynamicExecutor.cs" />
+    <Compile Remove="Utilities\ParameterParser.cs" />
+    <Compile Remove="DrawflowPlayground.Shared\**" />
+    <Compile Remove="DllTestRunner\**" />
+    <Compile Remove="SampleDll\**" />
+    <Content Remove="DrawflowPlayground.Shared\**" />
+    <Content Remove="DllTestRunner\**" />
+    <Content Remove="SampleDll\**" />
+    <EmbeddedResource Remove="DrawflowPlayground.Shared\**" />
+    <EmbeddedResource Remove="DllTestRunner\**" />
+    <EmbeddedResource Remove="SampleDll\**" />
+    <None Remove="DrawflowPlayground.Shared\**" />
+    <None Remove="DllTestRunner\**" />
+    <None Remove="SampleDll\**" />
+  </ItemGroup>
+
 </Project>
