@@ -18,6 +18,52 @@ namespace DrawflowPlayground.Utilities
         string ResolvePlaceholders(string template, Dictionary<string, object> inputs);
     }
 
+    /// <summary>
+    /// Custom AssemblyLoadContext that resolves dependencies from the same directory
+    /// as the plugin DLL. This is essential when loading assemblies with external dependencies.
+    /// </summary>
+    internal class PluginLoadContext : AssemblyLoadContext
+    {
+        private readonly AssemblyDependencyResolver _resolver;
+        private readonly string _pluginDirectory;
+
+        public PluginLoadContext(string pluginPath) : base(isCollectible: true)
+        {
+            _resolver = new AssemblyDependencyResolver(pluginPath);
+            _pluginDirectory = Path.GetDirectoryName(pluginPath)!;
+        }
+
+        protected override Assembly? Load(AssemblyName assemblyName)
+        {
+            // First, try the deps.json-based resolver
+            string? assemblyPath = _resolver.ResolveAssemblyToPath(assemblyName);
+            if (assemblyPath != null)
+            {
+                return LoadFromAssemblyPath(assemblyPath);
+            }
+
+            // Fallback: probe the plugin directory for the DLL by name
+            var candidatePath = Path.Combine(_pluginDirectory, assemblyName.Name + ".dll");
+            if (File.Exists(candidatePath))
+            {
+                return LoadFromAssemblyPath(candidatePath);
+            }
+
+            // Let the default context try (shared framework assemblies, etc.)
+            return null;
+        }
+
+        protected override IntPtr LoadUnmanagedDll(string unmanagedDllName)
+        {
+            string? libraryPath = _resolver.ResolveUnmanagedDllToPath(unmanagedDllName);
+            if (libraryPath != null)
+            {
+                return LoadUnmanagedDllFromPath(libraryPath);
+            }
+            return IntPtr.Zero;
+        }
+    }
+
     public class DynamicExecutor : IDynamicExecutor
     {
         private readonly ILogger<DynamicExecutor> _logger;
@@ -35,19 +81,59 @@ namespace DrawflowPlayground.Utilities
                 ? dllPath
                 : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, dllPath);
 
+            assemblyPath = Path.GetFullPath(assemblyPath);
+
             if (!File.Exists(assemblyPath))
             {
                 throw new FileNotFoundException($"Assembly not found at {assemblyPath}");
             }
 
-            var loadContext = AssemblyLoadContext.Default; 
+            _logger.LogInformation("Loading assembly from: {Path}", assemblyPath);
+
+            // Use a custom AssemblyLoadContext that can resolve dependencies
+            // from the same directory as the target DLL
+            var loadContext = new PluginLoadContext(assemblyPath);
             var assembly = loadContext.LoadFromAssemblyPath(assemblyPath);
+
+            _logger.LogInformation("Assembly loaded: {Name} (v{Version})",
+                assembly.GetName().Name, assembly.GetName().Version);
 
             var resolvedTypeName = ResolvePlaceholders(typeName, inputs ?? new Dictionary<string, object>());
             var type = assembly.GetType(resolvedTypeName);
             if (type == null)
             {
-                throw new TypeLoadException($"Type {resolvedTypeName} not found in assembly {assemblyPath}");
+                // Diagnostic: list all available types to help debug
+                var exportedTypes = new List<string>();
+                try
+                {
+                    exportedTypes = assembly.GetExportedTypes()
+                        .Select(t => t.FullName!)
+                        .OrderBy(t => t)
+                        .ToList();
+                }
+                catch (ReflectionTypeLoadException rtle)
+                {
+                    // Some types may fail to load due to missing dependencies
+                    exportedTypes = rtle.Types
+                        .Where(t => t != null)
+                        .Select(t => t!.FullName!)
+                        .OrderBy(t => t)
+                        .ToList();
+
+                    _logger.LogWarning("Some types could not be loaded. Loader exceptions:");
+                    foreach (var ex in rtle.LoaderExceptions.Where(e => e != null).Take(10))
+                    {
+                        _logger.LogWarning("  - {Message}", ex!.Message);
+                    }
+                }
+
+                var typeList = exportedTypes.Count > 0
+                    ? string.Join("\n  - ", exportedTypes)
+                    : "(none found — dependencies may be missing)";
+
+                throw new TypeLoadException(
+                    $"Type '{resolvedTypeName}' not found in assembly '{Path.GetFileName(assemblyPath)}'.\n" +
+                    $"Available types:\n  - {typeList}");
             }
 
             if (constructorDef != null && inputs != null)
@@ -144,3 +230,4 @@ namespace DrawflowPlayground.Utilities
         }
     }
 }
+
