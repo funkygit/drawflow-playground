@@ -110,145 +110,19 @@ id.addEventListener('dragover', (ev) => {
 });
 
 // ============================================================
-// Node Content HTML Builder
+// Wrappers for shared functions (pass editor/nodeMetaList globals)
 // ============================================================
 
-/**
- * Builds the full HTML content for a Drawflow node.
- * Structure: parent-div.node-config-container > title-div > params-table
- * @param {Object} meta - Node metadata from nodeMetaList
- * @param {Object} data - Node data (nodeKey, selectedVariant, parameters, etc.)
- * @param {string|number} nodeId - The Drawflow node ID (may not be known yet at creation time)
- * @returns {string} HTML string for the node content
- */
-function buildNodeContentHtml(meta, data, nodeId) {
-    const hasVariants = meta.variants && meta.variants.length > 1;
-    const selectedVariant = data.selectedVariant || (meta.variants && meta.variants.length > 0 ? meta.variants[0].value : null);
-
-    let html = `<div class="node-config-container" data-node-key="${meta.nodeKey}">`;
-
-    // Title row
-    html += `<div class="node-title">`;
-    html += `<span>${meta.displayName}</span>`;
-    html += `<span class="node-id-badge">#<span class="node-id-value">${nodeId || '?'}</span></span>`;
-    html += `</div>`;
-
-    // Variant selector (if multiple variants)
-    if (hasVariants) {
-        html += `<div class="node-variant-row">`;
-        html += `<label>${meta.variantSource || 'Variant'}</label>`;
-        html += `<select class="node-variant-select">`;
-        meta.variants.forEach(v => {
-            const selected = v.value === selectedVariant ? ' selected' : '';
-            html += `<option value="${v.value}"${selected}>${v.label}</option>`;
-        });
-        html += `</select>`;
-        html += `</div>`;
-    }
-
-    // Parameters container (will be populated by DynamicFormRenderer after node is created)
-    html += `<div class="node-params-container"></div>`;
-
-    // Previous connected nodes display removed as it is handled via NODE_OUTPUT dropdowns
-
-    // Update data button
-    html += `<button class="node-update-btn" type="button">Update</button>`;
-
-    html += `</div>`;
-    return html;
+function _findPrevNodes(nodeId, requiredType) {
+    return findConnectedPreviousNodes(editor, nodeMetaList, nodeId, requiredType);
 }
 
-/**
- * Renders the parameter table inside a node's content using DynamicFormRenderer.
- * Also populates existing values from data.parameters.
- */
-function renderNodeParams(nodeId, data, meta) {
-    const nodeEl = document.getElementById(`node-${nodeId}`);
-    if (!nodeEl) return;
-
-    const paramsContainer = nodeEl.querySelector('.node-params-container');
-    if (!paramsContainer) return;
-
-    const renderer = new DynamicFormRenderer(meta, (requiredType) => {
-        return findConnectedPreviousNodes(nodeId, requiredType);
-    });
-
-    renderer.renderAllVariantsTable(paramsContainer, data.selectedVariant, (requiredType) => {
-        return findConnectedPreviousNodes(nodeId, requiredType);
-    });
-
-    // Populate existing values if any
-    if (data.parameters) {
-        Object.keys(data.parameters).forEach(key => {
-            const el = paramsContainer.querySelector(`[name="${key}"]`);
-            if (el) el.value = data.parameters[key];
-        });
-    }
+function _renderNodeParams(nodeId, data, meta) {
+    renderNodeParams(nodeId, data, meta, _findPrevNodes);
 }
 
-
-
-/**
- * Finds previous nodes connected to currentNodeId that output the requiredType.
- * Only considers nodes with actual Drawflow connections into the current node.
- */
-function findConnectedPreviousNodes(currentNodeId, requiredType) {
-    const data = editor.export();
-    if (!data.drawflow.Home || !data.drawflow.Home.data) return [];
-
-    const nodes = data.drawflow.Home.data;
-    const currentNode = nodes[currentNodeId];
-    if (!currentNode || !currentNode.inputs) return [];
-
-    const compatible = [];
-    const seenIds = new Set();
-
-    // BFS to collect ALL ancestor node IDs (not just immediate parents)
-    const queue = [currentNodeId];
-    const visited = new Set([String(currentNodeId)]);
-
-    while (queue.length > 0) {
-        const nodeId = queue.shift();
-        const node = nodes[nodeId];
-        if (!node || !node.inputs) continue;
-
-        for (const inputKey in node.inputs) {
-            const connections = node.inputs[inputKey].connections;
-            if (connections) {
-                connections.forEach(conn => {
-                    const id = String(conn.node);
-                    if (!visited.has(id)) {
-                        visited.add(id);
-                        seenIds.add(conn.node);
-                        queue.push(conn.node);
-                    }
-                });
-            }
-        }
-    }
-
-    // Check each connected node for matching output types
-    seenIds.forEach(sourceId => {
-        const sourceNode = nodes[sourceId];
-        if (!sourceNode || !sourceNode.data || !sourceNode.data.nodeKey) return;
-
-        const meta = nodeMetaList.find(m => m.nodeKey === sourceNode.data.nodeKey);
-        const variant = meta?.variants.find(v => v.value === sourceNode.data.selectedVariant);
-
-        if (variant && variant.outputs) {
-            variant.outputs.forEach(output => {
-                if (output.dataType === requiredType || requiredType === 'System.Object') {
-                    compatible.push({
-                        nodeId: sourceId,
-                        outputName: output.name,
-                        label: `${sourceNode.data.displayName} (${output.name})`
-                    });
-                }
-            });
-        }
-    });
-
-    return compatible;
+function _updateNodeDataFromContent(nodeId) {
+    updateNodeDataFromContent(editor, nodeId);
 }
 
 // ============================================================
@@ -313,7 +187,10 @@ function addNodeToDrawflow(type, posx, posy, nodeKey = null) {
             }
 
             // Render parameters table
-            renderNodeParams(newNodeId, data, meta);
+            _renderNodeParams(newNodeId, data, meta);
+
+            // Add output port labels for control nodes
+            labelOutputPorts(newNodeId, meta);
 
             // Attach event listeners
             attachNodeEventListeners(newNodeId, data, meta);
@@ -348,8 +225,8 @@ function refreshDownstreamNodes(sourceNodeId) {
         if (node && node.data && node.data.nodeKey) {
             const meta = nodeMetaList.find(m => m.nodeKey === node.data.nodeKey);
             if (meta) {
-                updateNodeDataFromContent(downstreamId); // Preserve existing values
-                renderNodeParams(downstreamId, node.data, meta);
+                _updateNodeDataFromContent(downstreamId); // Preserve existing values
+                _renderNodeParams(downstreamId, node.data, meta);
                 attachNodeEventListeners(downstreamId, node.data, meta);
             }
         }
@@ -389,7 +266,7 @@ function attachNodeEventListeners(nodeId, data, meta) {
     if (updateBtn) {
         updateBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            updateNodeDataFromContent(nodeId);
+            _updateNodeDataFromContent(nodeId);
         });
     }
 
@@ -401,39 +278,19 @@ function attachNodeEventListeners(nodeId, data, meta) {
 }
 
 // ============================================================
-// Update Node Data from In-Node Content
-// ============================================================
-
-function updateNodeDataFromContent(nodeId) {
-    const node = editor.getNodeFromId(nodeId);
-    if (!node || !node.data) return;
-
-    const nodeEl = document.getElementById(`node-${nodeId}`);
-    if (!nodeEl) return;
-
-    const paramsContainer = nodeEl.querySelector('.node-params-container');
-    if (!paramsContainer) return;
-
-    const inputs = paramsContainer.querySelectorAll('input, select');
-    node.data.parameters = {};
-    inputs.forEach(input => {
-        if (input.name) {
-            node.data.parameters[input.name] = input.value;
-        }
-    });
-
-    log(`Updated Node ${nodeId} data`);
-}
-
-// ============================================================
 // API Calls
 // ============================================================
 
 async function saveWorkflow() {
-    const data = editor.export();
+    // Extract clean data (auto-refreshes all params, strips HTML)
+    const data = extractCleanData(editor);
+
+    const nameInput = document.getElementById('workflow-name');
+    const name = (nameInput && nameInput.value.trim()) || "My Workflow " + new Date().toISOString();
+
     const workflow = {
         Id: currentWorkflowId || undefined,
-        Name: "My Workflow " + new Date().toISOString(),
+        Name: name,
         JsonData: JSON.stringify(data)
     };
 
@@ -446,6 +303,74 @@ async function saveWorkflow() {
     currentWorkflowId = result.id;
     log(`Workflow Saved: ${currentWorkflowId}`);
 }
+
+// ============================================================
+// Load Workflow
+// ============================================================
+
+async function showLoadDialog() {
+    try {
+        const res = await fetch('/Home/GetWorkflows');
+        const workflows = await res.json();
+
+        if (!workflows || workflows.length === 0) {
+            alert('No saved workflows found.');
+            return;
+        }
+
+        // Build a simple selection list
+        const names = workflows.map((wf, i) => `${i + 1}. ${wf.name || 'Untitled'} (${wf.id})`);
+        const choice = prompt('Select a workflow to load:\n\n' + names.join('\n') + '\n\nEnter number:');
+
+        if (choice) {
+            const index = parseInt(choice, 10) - 1;
+            if (index >= 0 && index < workflows.length) {
+                await loadWorkflow(workflows[index].id, workflows[index].name);
+            }
+        }
+    } catch (err) {
+        log("Error loading workflows: " + err);
+    }
+}
+
+async function loadWorkflow(workflowId, workflowName) {
+    try {
+        const res = await fetch(`/Home/GetWorkflow?id=${workflowId}`);
+        const workflow = await res.json();
+
+        if (!workflow || !workflow.jsonData) {
+            log("Failed to load workflow data.");
+            return;
+        }
+
+        const cleanData = JSON.parse(workflow.jsonData);
+
+        // Rehydrate — rebuilds HTML from meta, imports, renders params
+        rehydrateWorkflow(editor, nodeMetaList, cleanData, {
+            findPrevNodesFn: _findPrevNodes,
+            onNodeReady: (nodeId, data, meta) => {
+                attachNodeEventListeners(nodeId, data, meta);
+            }
+        });
+
+        currentWorkflowId = workflowId;
+
+        // Update the name input
+        const nameInput = document.getElementById('workflow-name');
+        if (nameInput && workflowName) {
+            nameInput.value = workflowName;
+        }
+
+        log(`Loaded Workflow: ${workflowName || workflowId}`);
+    } catch (err) {
+        log("Error loading workflow: " + err);
+        console.error(err);
+    }
+}
+
+// ============================================================
+// Run Workflow
+// ============================================================
 
 async function runWorkflow() {
     if (!currentWorkflowId) {
@@ -480,14 +405,14 @@ async function runWorkflow() {
 
 editor.on('connectionCreated', (connection) => {
     // connection = { output_id, input_id, output_class, input_class }
-    updateNodeDataFromContent(connection.input_id); // Save existing input values before re-rendering
+    _updateNodeDataFromContent(connection.input_id); // Save existing input values before re-rendering
 
     // Re-render params for the target node (to refresh NODE_OUTPUT selects)
     const node = editor.getNodeFromId(connection.input_id);
     if (node && node.data && node.data.nodeKey) {
         const meta = nodeMetaList.find(m => m.nodeKey === node.data.nodeKey);
         if (meta) {
-            renderNodeParams(connection.input_id, node.data, meta);
+            _renderNodeParams(connection.input_id, node.data, meta);
             attachNodeEventListeners(connection.input_id, node.data, meta);
         }
     }
@@ -495,14 +420,14 @@ editor.on('connectionCreated', (connection) => {
 
 editor.on('connectionRemoved', (connection) => {
     // connection = { output_id, input_id, output_class, input_class }
-    updateNodeDataFromContent(connection.input_id); // Save existing input values before re-rendering
+    _updateNodeDataFromContent(connection.input_id); // Save existing input values before re-rendering
 
     // Re-render params for the target node
     const node = editor.getNodeFromId(connection.input_id);
     if (node && node.data && node.data.nodeKey) {
         const meta = nodeMetaList.find(m => m.nodeKey === node.data.nodeKey);
         if (meta) {
-            renderNodeParams(connection.input_id, node.data, meta);
+            _renderNodeParams(connection.input_id, node.data, meta);
             attachNodeEventListeners(connection.input_id, node.data, meta);
         }
     }
@@ -518,4 +443,202 @@ function log(msg) {
     const p = document.createElement('p');
     p.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
     logDiv.prepend(p);
+}
+
+// ============================================================
+// Right-Click Context Menu
+// ============================================================
+
+let contextNodeId = null;
+const contextMenu = document.getElementById('node-context-menu');
+
+// Show context menu on right-click on a Drawflow node
+document.getElementById('drawflow').addEventListener('contextmenu', (e) => {
+    // Walk up from the target to find the .drawflow-node parent
+    const nodeEl = e.target.closest('.drawflow-node');
+    if (!nodeEl) {
+        contextMenu.style.display = 'none';
+        return;
+    }
+
+    e.preventDefault();
+
+    // Extract node ID from the element id (format: "node-{id}")
+    const idMatch = nodeEl.id.match(/^node-(\d+)$/);
+    if (!idMatch) return;
+
+    contextNodeId = idMatch[1];
+
+    // Position and show context menu
+    contextMenu.style.left = e.clientX + 'px';
+    contextMenu.style.top = e.clientY + 'px';
+    contextMenu.style.display = 'block';
+});
+
+// Hide context menu on click elsewhere
+document.addEventListener('click', () => {
+    contextMenu.style.display = 'none';
+});
+
+// ============================================================
+// Node Test Popup
+// ============================================================
+
+function testSelectedNode() {
+    contextMenu.style.display = 'none';
+    if (!contextNodeId) return;
+
+    const node = editor.getNodeFromId(contextNodeId);
+    if (!node || !node.data || !node.data.nodeKey) {
+        alert('This node cannot be tested (no configuration).');
+        return;
+    }
+
+    const meta = nodeMetaList.find(m => m.nodeKey === node.data.nodeKey);
+    if (!meta) {
+        alert('Node metadata not found.');
+        return;
+    }
+
+    // Find the selected variant
+    const selectedVariant = node.data.selectedVariant || (meta.variants && meta.variants.length > 0 ? meta.variants[0].value : null);
+    const variant = meta.variants.find(v => v.value === selectedVariant);
+    if (!variant) {
+        alert('No variant found for this node.');
+        return;
+    }
+
+    // Collect all params from the variant
+    const params = variant.parameters || [];
+
+    // Set modal title
+    document.getElementById('test-modal-title').textContent = `🧪 Test: ${meta.displayName}${meta.variants.length > 1 ? ' (' + variant.label + ')' : ''}`;
+
+    // Build param form
+    let html = '<table>';
+    if (params.length === 0) {
+        html += '<tr><td colspan="2" style="text-align:center;color:#888;">No parameters</td></tr>';
+    }
+
+    params.forEach(param => {
+        const currentValue = (node.data.parameters && node.data.parameters[param.name]) || param.value || '';
+        const sourceClass = param.source === 'NODE_OUTPUT' ? 'badge-node-output'
+                          : param.source === 'USER_INPUT'  ? 'badge-user-input'
+                          : 'badge-constant';
+        const sourceLabel = param.source === 'NODE_OUTPUT' ? 'NODE_OUTPUT'
+                          : param.source === 'USER_INPUT'  ? 'INPUT'
+                          : 'CONST';
+
+        html += `<tr>`;
+        html += `<td>${param.displayName || param.name} <span class="param-source-badge ${sourceClass}">${sourceLabel}</span></td>`;
+        html += `<td>`;
+
+        if (param.source === 'Constant') {
+            html += `<input type="text" name="${param.name}" value="${currentValue}" readonly />`;
+        } else if (param.allowedValues && param.allowedValues.length > 0) {
+            html += `<select name="${param.name}">`;
+            param.allowedValues.forEach(v => {
+                const selected = v === currentValue ? ' selected' : '';
+                html += `<option value="${v}"${selected}>${v}</option>`;
+            });
+            html += `</select>`;
+        } else if (param.source === 'NODE_OUTPUT') {
+            // For NODE_OUTPUT, show empty input for test data (ignore the "nodeId.outputName" reference)
+            html += `<input type="text" name="${param.name}" value="" placeholder="Enter test value for ${param.displayName || param.name}" />`;
+        } else {
+            html += `<input type="text" name="${param.name}" value="${currentValue}" />`;
+        }
+
+        html += `</td></tr>`;
+    });
+
+    html += '</table>';
+
+    // Store context in the modal for executeNodeTest
+    const modalBody = document.getElementById('test-modal-body');
+    modalBody.innerHTML = html;
+    modalBody.dataset.nodeKey = node.data.nodeKey;
+    modalBody.dataset.variantValue = selectedVariant;
+
+    document.getElementById('test-modal-status').textContent = '';
+    document.getElementById('test-run-btn').disabled = false;
+
+    // Show modal
+    document.getElementById('test-modal-overlay').style.display = 'flex';
+}
+
+function closeTestModal() {
+    document.getElementById('test-modal-overlay').style.display = 'none';
+}
+
+// Close on overlay click (outside modal)
+document.getElementById('test-modal-overlay').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeTestModal();
+});
+
+async function executeNodeTest() {
+    const modalBody = document.getElementById('test-modal-body');
+    const nodeKey = modalBody.dataset.nodeKey;
+    const variantValue = modalBody.dataset.variantValue;
+    const statusEl = document.getElementById('test-modal-status');
+    const runBtn = document.getElementById('test-run-btn');
+
+    // Collect params from form
+    const params = {};
+    modalBody.querySelectorAll('input:not([readonly]), select').forEach(el => {
+        if (el.name) params[el.name] = el.value;
+    });
+
+    statusEl.textContent = '⏳ Executing...';
+    runBtn.disabled = true;
+
+    // Remove old result box
+    const oldResult = modalBody.querySelector('.test-result-box');
+    if (oldResult) oldResult.remove();
+
+    try {
+        const res = await fetch('/Home/TestNode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                nodeKey: nodeKey,
+                variantValue: variantValue,
+                parameters: params
+            })
+        });
+
+        const result = await res.json();
+
+        const resultBox = document.createElement('div');
+        resultBox.className = 'test-result-box';
+
+        if (result.success) {
+            resultBox.classList.add('test-result-success');
+            let text = `✓ Output: ${result.output}\n`;
+            if (result.steps && result.steps.length > 0) {
+                text += '\nExecution Steps:\n';
+                result.steps.forEach((step, i) => {
+                    text += `  ${i + 1}. ${step.method}() → ${JSON.stringify(step.result)}\n`;
+                });
+            }
+            resultBox.textContent = text;
+            statusEl.textContent = '✓ Test completed successfully';
+        } else {
+            resultBox.classList.add('test-result-error');
+            resultBox.textContent = `✗ Error: ${result.error}${result.innerError ? '\n  Inner: ' + result.innerError : ''}`;
+            statusEl.textContent = '✗ Test failed';
+        }
+
+        modalBody.appendChild(resultBox);
+        log(`Test ${nodeKey}: ${result.success ? 'SUCCESS' : 'FAILED'} — ${result.output || result.error}`);
+    } catch (err) {
+        statusEl.textContent = '✗ Request failed';
+        const resultBox = document.createElement('div');
+        resultBox.className = 'test-result-box test-result-error';
+        resultBox.textContent = `✗ Network error: ${err.message}`;
+        modalBody.appendChild(resultBox);
+        log(`Test ${nodeKey} failed: ${err.message}`);
+    }
+
+    runBtn.disabled = false;
 }

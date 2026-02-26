@@ -208,4 +208,13 @@ namespace DrawflowPlayground.Models
         public int CurrentIndex { get; set; }
         public bool IsComplete => CurrentIndex >= (Mode == "Collection" ? Items?.Count ?? 0 : TotalCount);
     }
+
+    // --- Test Node Request ---
+
+    public class TestNodeRequest
+    {
+        public string NodeKey { get; set; }
+        public string VariantValue { get; set; }
+        public Dictionary<string, string> Parameters { get; set; }
+    }
 }
