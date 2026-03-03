@@ -14,7 +14,6 @@
   <!-- Exclude files that are now in the shared library to avoid duplicate compilation -->
   <!-- Also exclude nested project directories since they are subdirs of this project -->
   <ItemGroup>
-    <Compile Remove="Models\WorkflowEntities.cs" />
     <Compile Remove="Utilities\DynamicExecutor.cs" />
     <Compile Remove="Utilities\ParameterParser.cs" />
     <Compile Remove="DrawflowPlayground.Shared\**" />
