@@ -261,15 +261,6 @@ function attachNodeEventListeners(nodeId, data, meta) {
         });
     }
 
-    // Update button
-    const updateBtn = nodeEl.querySelector('.node-update-btn');
-    if (updateBtn) {
-        updateBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            _updateNodeDataFromContent(nodeId);
-        });
-    }
-
     // Prevent click propagation on inputs/selects so Drawflow doesn't interfere
     nodeEl.querySelectorAll('input, select, button').forEach(el => {
         el.addEventListener('mousedown', (e) => e.stopPropagation());
@@ -375,6 +366,14 @@ async function loadWorkflow(workflowId, workflowName) {
 async function runWorkflow() {
     if (!currentWorkflowId) {
         await saveWorkflow();
+    }
+
+    // Flush all node parameters from the DOM before execution
+    const exportData = editor.export();
+    if (exportData.drawflow.Home && exportData.drawflow.Home.data) {
+        for (const nodeId in exportData.drawflow.Home.data) {
+            _updateNodeDataFromContent(nodeId);
+        }
     }
 
     // Reset Visuals

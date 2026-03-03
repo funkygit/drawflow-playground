@@ -13,8 +13,8 @@ class WorkflowExecutor {
         const data = this.editor.export();
         // Safety check for Home module
         if (!data.drawflow.Home || !data.drawflow.Home.data) {
-             console.warn("Workflow data empty or invalid.");
-             return;
+            console.warn("Workflow data empty or invalid.");
+            return;
         }
 
         const nodes = data.drawflow.Home.data;
@@ -22,7 +22,7 @@ class WorkflowExecutor {
         // Queue Start Nodes
         for (const nodeId in nodes) {
             const node = nodes[nodeId];
-			
+
             // Check if there are any active incoming connections
             let hasIncomingConnections = false;
             for (const inputKey in node.inputs) {
@@ -31,7 +31,7 @@ class WorkflowExecutor {
                     break;
                 }
             }
-			
+
             // Convention: Start nodes have no incoming connections OR are explicitly named 'start'
             if (!hasIncomingConnections || node.name.toLowerCase() === 'start') {
                 this.log(`Queueing Start Node ${nodeId}...`);
@@ -52,6 +52,7 @@ class WorkflowExecutor {
         const node = nodes[nodeId];
         const nodeData = node.data || {};
 
+        console.log(nodeData);
         const nodeKey = nodeData.nodeKey || null;
         const nodeType = nodeData.nodeType || node.name || 'action';
 
@@ -186,16 +187,16 @@ class WorkflowExecutor {
     async _checkAndQueueChildren(completedNodeId, triggeredOutput = null) {
         const data = this.editor.export();
         if (!data.drawflow.Home || !data.drawflow.Home.data) return;
-        
+
         const nodes = data.drawflow.Home.data;
         const completedNode = nodes[completedNodeId];
-        
+
         if (!completedNode) return;
 
         // Find children
         const outputs = completedNode.outputs;
         const childrenIds = new Set();
-        
+
         for (const key in outputs) {
             // If triggeredOutput is set, only queue children from that specific output
             if (triggeredOutput && key !== triggeredOutput) continue;
@@ -206,12 +207,12 @@ class WorkflowExecutor {
 
         for (const childId of childrenIds) {
             if (this._canQueue(childId, nodes)) {
-                 this.log(`Queueing Node ${childId}...`);
-                 const queueItem = this.buildQueueItem(childId, nodes, completedNodeId);
-                 await this.connection.invoke("QueueNode", queueItem);
+                this.log(`Queueing Node ${childId}...`);
+                const queueItem = this.buildQueueItem(childId, nodes, completedNodeId);
+                await this.connection.invoke("QueueNode", queueItem);
             }
         }
-        
+
         // Check if End node
         if (completedNode.name.toLowerCase() === 'end') {
             this.log("Workflow Completed (End Node Reached)");
@@ -242,13 +243,13 @@ class WorkflowExecutor {
             });
         }
 
-        if (!hasInputs) return true; 
+        if (!hasInputs) return true;
 
         const nodeName = childNode.name.toLowerCase();
         const isLoopOrMerge = nodeName.includes("loop") || nodeName.includes("merge");
 
         if (isLoopOrMerge) {
-            return anyParentReady; 
+            return anyParentReady;
         } else {
             return allParentsReady;
         }
