@@ -176,16 +176,16 @@ class WorkflowExecutor {
                     // Resolve the output name from the connection
                     // conn.output is the Drawflow output key (e.g., "output_1")
                     // Map to the actual output name from the node's meta
-                    let sourceOutputName = conn.output;
+                    let sourceOutputName = conn.output || 'output_1';
 
                     if (sourceNode && sourceNode.data && sourceNode.data.nodeKey) {
                         const sourceMeta = this.nodeMetaList.find(m => m.nodeKey === sourceNode.data.nodeKey);
                         if (sourceMeta) {
                             const sourceVariant = sourceMeta.variants?.find(v => v.value === sourceNode.data.selectedVariant)
                                 || sourceMeta.variants?.[0];
-                            if (sourceVariant && sourceVariant.outputs) {
+                            if (sourceVariant && sourceVariant.outputs && sourceOutputName) {
                                 // Map output_1 -> index 0, output_2 -> index 1, etc.
-                                const outputIndex = parseInt(conn.output.replace('output_', '')) - 1;
+                                const outputIndex = parseInt(sourceOutputName.replace('output_', '')) - 1;
                                 if (sourceVariant.outputs[outputIndex]) {
                                     sourceOutputName = sourceVariant.outputs[outputIndex].name;
                                 }
