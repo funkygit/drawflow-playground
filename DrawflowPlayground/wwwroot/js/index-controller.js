@@ -261,14 +261,7 @@ function attachNodeEventListeners(nodeId, data, meta) {
         });
     }
 
-    // Update button
-    const updateBtn = nodeEl.querySelector('.node-update-btn');
-    if (updateBtn) {
-        updateBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            _updateNodeDataFromContent(nodeId);
-        });
-    }
+
 
     // Prevent click propagation on inputs/selects so Drawflow doesn't interfere
     nodeEl.querySelectorAll('input, select, button').forEach(el => {
@@ -373,9 +366,8 @@ async function loadWorkflow(workflowId, workflowName) {
 // ============================================================
 
 async function runWorkflow() {
-    if (!currentWorkflowId) {
-        await saveWorkflow();
-    }
+    // Always save to sync node data to the backend before running
+    await saveWorkflow();
 
     // Reset Visuals
     document.querySelectorAll('.node-status').forEach(el => el.remove());

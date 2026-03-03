@@ -41,6 +41,7 @@ namespace DrawflowPlayground.Models
         public string NodeType { get; set; }
 
         [System.Text.Json.Serialization.JsonIgnore]
+        [BsonIgnore]
         public NodeConfiguration Configuration { get; set; } // This will be fetched from config based on the node_key
         public List<NodeParameterMeta> Parameters { get; set; } // This will be passed by UI
         public NodeInput Input { get; set; }
@@ -193,8 +194,10 @@ namespace DrawflowPlayground.Models
         public string DisplayName { get; set; }
         public string DataType { get; set; }
         public string Source { get; set; }
-        public object Value { get; set; }
+        public string Value { get; set; }
+        [BsonIgnore]
         public List<string> AllowedValues { get; set; }
+        [BsonIgnore]
         public VisibleWhenCondition VisibleWhen { get; set; }
     }
 

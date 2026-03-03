@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>drawflow_playground</RootNamespace>
@@ -9,10 +9,6 @@
 
   <ItemGroup>
     <PackageReference Include="LiteDB" Version="5.0.21" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="DrawflowPlayground.Shared\DrawflowPlayground.Shared.csproj" />
   </ItemGroup>
 
   <!-- Exclude files that are now in the shared library to avoid duplicate compilation -->
@@ -33,6 +29,9 @@
     <None Remove="DrawflowPlayground.Shared\**" />
     <None Remove="DllTestRunner\**" />
     <None Remove="SampleDll\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DrawflowPlayground.Shared\DrawflowPlayground.Shared.csproj" />
   </ItemGroup>
 
 </Project>

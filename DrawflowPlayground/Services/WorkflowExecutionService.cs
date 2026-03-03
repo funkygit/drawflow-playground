@@ -103,7 +103,13 @@ namespace DrawflowPlayground.Services
             item.Configuration = config;
             item.QueuedAt = DateTime.UtcNow;
             item.Processed = false;
+
+            // Temporarily null out Configuration before insert — LiteDB can't serialize it
+            var savedConfig = item.Configuration;
+            item.Configuration = null;
             _db.ExecutionQueue.Insert(item);
+            item.Configuration = savedConfig;
+
             _logger.LogInformation($"Queued Node {item.NodeId} ({item.NodeType}) for Execution {item.ExecutionId}");
         }
 

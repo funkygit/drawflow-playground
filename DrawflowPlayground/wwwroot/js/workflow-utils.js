@@ -42,9 +42,6 @@ function buildNodeContentHtml(meta, data, nodeId) {
     // Parameters container (will be populated by DynamicFormRenderer after node is created)
     html += `<div class="node-params-container"></div>`;
 
-    // Update data button
-    html += `<button class="node-update-btn" type="button">Update</button>`;
-
     html += `</div>`;
     return html;
 }

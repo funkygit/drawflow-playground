@@ -4,3 +4,5 @@ bin/
 *.db
 WorkflowData-log.db
 WorkflowData.db
+/.vscode
+/plan
