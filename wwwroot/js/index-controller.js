@@ -481,6 +481,65 @@ document.addEventListener('click', () => {
 });
 
 // ============================================================
+// Node Rename
+// ============================================================
+
+function renameSelectedNode() {
+    contextMenu.style.display = 'none';
+    if (!contextNodeId) return;
+
+    const node = editor.getNodeFromId(contextNodeId);
+    if (!node || !node.data) return;
+
+    const nodeEl = document.getElementById(`node-${contextNodeId}`);
+    if (!nodeEl) return;
+
+    const nameSpan = nodeEl.querySelector('.node-display-name');
+    if (!nameSpan) return;
+
+    const currentName = node.data.customName || node.data.displayName || '';
+
+    // Replace span with input
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = currentName;
+    input.className = 'node-rename-input';
+    input.addEventListener('mousedown', (e) => e.stopPropagation());
+    input.addEventListener('click', (e) => e.stopPropagation());
+
+    const commitRename = () => {
+        const newName = input.value.trim();
+        if (newName && newName !== currentName) {
+            node.data.customName = newName;
+            nameSpan.textContent = newName;
+            refreshDownstreamNodes(contextNodeId);
+            log(`Node ${contextNodeId}: Renamed to "${newName}"`);
+        } else {
+            nameSpan.textContent = currentName;
+        }
+        input.replaceWith(nameSpan);
+    };
+
+    input.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            commitRename();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            nameSpan.textContent = currentName;
+            input.replaceWith(nameSpan);
+        }
+    });
+
+    input.addEventListener('blur', commitRename);
+
+    nameSpan.replaceWith(input);
+    input.focus();
+    input.select();
+}
+
+// ============================================================
 // Node Test Popup
 // ============================================================
 
@@ -523,11 +582,11 @@ function testSelectedNode() {
     params.forEach(param => {
         const currentValue = (node.data.parameters && node.data.parameters[param.name]) || param.value || '';
         const sourceClass = param.source === 'NODE_OUTPUT' ? 'badge-node-output'
-                          : param.source === 'USER_INPUT'  ? 'badge-user-input'
-                          : 'badge-constant';
+            : param.source === 'USER_INPUT' ? 'badge-user-input'
+                : 'badge-constant';
         const sourceLabel = param.source === 'NODE_OUTPUT' ? 'NODE_OUTPUT'
-                          : param.source === 'USER_INPUT'  ? 'INPUT'
-                          : 'CONST';
+            : param.source === 'USER_INPUT' ? 'INPUT'
+                : 'CONST';
 
         html += `<tr>`;
         html += `<td>${param.displayName || param.name} <span class="param-source-badge ${sourceClass}">${sourceLabel}</span></td>`;

@@ -22,7 +22,7 @@ function buildNodeContentHtml(meta, data, nodeId) {
 
     // Title row
     html += `<div class="node-title">`;
-    html += `<span>${meta.displayName}</span>`;
+    html += `<span class="node-display-name">${data.customName || meta.displayName}</span>`;
     html += `<span class="node-id-badge">#<span class="node-id-value">${nodeId || '?'}</span></span>`;
     html += `</div>`;
 
@@ -149,7 +149,7 @@ function findConnectedPreviousNodes(editor, nodeMetaList, currentNodeId, require
                     compatible.push({
                         nodeId: sourceId,
                         outputName: output.name,
-                        label: `${sourceNode.data.displayName} (${output.name})`
+                        label: `${sourceNode.data.customName || sourceNode.data.displayName} (${output.name})`
                     });
                 }
             });

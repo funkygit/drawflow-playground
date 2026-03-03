@@ -61,6 +61,17 @@
         opacity: 0.8;
         font-weight: 400;
     }
+    .node-title .node-rename-input {
+        background: rgba(255,255,255,0.9);
+        border: 1px solid #fff;
+        border-radius: 3px;
+        color: #333;
+        font-size: 0.78rem;
+        font-weight: 600;
+        padding: 0 4px;
+        outline: none;
+        width: 120px;
+    }
 
     /* Variant selector */
     .node-variant-row {
@@ -351,6 +362,7 @@
 
 <!-- Right-click context menu -->
 <div id="node-context-menu" class="node-context-menu" style="display:none;">
+    <div class="ctx-item" onclick="renameSelectedNode()">✏️ Rename Node</div>
     <div class="ctx-item" onclick="testSelectedNode()">🧪 Test Node</div>
 </div>
 
