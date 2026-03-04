@@ -196,7 +196,7 @@ public class HomeController : Controller
         DisplayName = p.DisplayName ?? p.Name,
         DataType = p.DataType,
         Source = p.Source,
-        Value = p.Value,
+        Value = p.Value?.ToString() ?? "",
         AllowedValues = p.AllowedValues,
         VisibleWhen = p.VisibleWhen
     }).ToList();

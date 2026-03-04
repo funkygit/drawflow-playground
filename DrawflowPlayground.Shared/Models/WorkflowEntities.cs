@@ -34,17 +34,15 @@ namespace DrawflowPlayground.Models
     {
         [BsonId]
         public Guid Id { get; set; }
-        public Guid WorkflowId { get; set; }    
+        public Guid WorkflowId { get; set; }
         public Guid ExecutionId { get; set; }
         public string NodeId { get; set; } // Drawflow uses string IDs usually
-        public string NodeKey { get; set; } 
+        public string NodeKey { get; set; }
         public string NodeType { get; set; }
 
-        [System.Text.Json.Serialization.JsonIgnore]
-        public NodeConfiguration Configuration { get; set; } // This will be fetched from config based on the node_key
         public List<NodeParameterMeta> Parameters { get; set; } // This will be passed by UI
         public NodeInput Input { get; set; }
-        public DateTime QueuedAt { get; set; } 
+        public DateTime QueuedAt { get; set; }
         public bool Processed { get; set; }
     }
 
@@ -56,7 +54,7 @@ namespace DrawflowPlayground.Models
         public string NodeTypeKey { get; set; } // "input", "processing", "output"
         public int NodeTypeOrder { get; set; } // 1, 2, 3...
         public string ExecutionMode { get; set; } // "LongRunning" or "Transient"
-        public string DllPath { get; set; }  
+        public string DllPath { get; set; }
 
         // For Variant-Based Mapping
         public string VariantSource { get; set; }
@@ -64,10 +62,10 @@ namespace DrawflowPlayground.Models
 
         // For LongRunning
         public NodeLifecycle Lifecycle { get; set; }
-        
+
         // For Transient
         public List<MethodDefinition> ExecutionFlow { get; set; }
-        
+
         public List<NodeOutput> Outputs { get; set; }
     }
 
@@ -108,7 +106,7 @@ namespace DrawflowPlayground.Models
         public object Value { get; set; } // Constant value from config
         public object DefaultValue { get; set; }
         public VisibleWhenCondition VisibleWhen { get; set; }
-        
+
         [System.Text.Json.Serialization.JsonIgnore]
         public bool HasDefaultValue => DefaultValue != null;
         [System.Text.Json.Serialization.JsonIgnore]
@@ -120,7 +118,7 @@ namespace DrawflowPlayground.Models
         public string Field { get; set; }
         public string Value { get; set; }
     }
-    
+
     public class ParameterRequirement
     {
         public string Type { get; set; } // "Static" or "Conditional"
@@ -193,8 +191,10 @@ namespace DrawflowPlayground.Models
         public string DisplayName { get; set; }
         public string DataType { get; set; }
         public string Source { get; set; }
-        public object Value { get; set; }
+        public string Value { get; set; }
+        [BsonIgnore]
         public List<string> AllowedValues { get; set; }
+        [BsonIgnore]
         public VisibleWhenCondition VisibleWhen { get; set; }
     }
 

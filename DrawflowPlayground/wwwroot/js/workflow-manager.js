@@ -10,6 +10,14 @@ class WorkflowExecutor {
     }
 
     async start() {
+        // Sync all node params from DOM into Drawflow's live data before exporting
+        const preData = this.editor.export();
+        if (preData.drawflow.Home && preData.drawflow.Home.data) {
+            for (const nodeId in preData.drawflow.Home.data) {
+                updateNodeDataFromContent(this.editor, nodeId);
+            }
+        }
+
         const data = this.editor.export();
         // Safety check for Home module
         if (!data.drawflow.Home || !data.drawflow.Home.data) {
@@ -51,14 +59,15 @@ class WorkflowExecutor {
     buildQueueItem(nodeId, nodes, completedNodeId = null) {
         const node = nodes[nodeId];
         const nodeData = node.data || {};
+        console.log("Node Data: ", nodeData);   
 
         console.log(nodeData);
         const nodeKey = nodeData.nodeKey || null;
         const nodeType = nodeData.nodeType || node.name || 'action';
 
         // Build parameters by scraping the saved data.parameters
-        const parameters = this._buildParameters(nodeData);
-
+        const parameters = this._buildParameters(nodeData, nodeId);
+        console.log("Parameters: ", parameters);
         // Resolve NodeInput from connections
         const input = this._resolveInput(nodeId, nodes, completedNodeId);
 
@@ -73,58 +82,75 @@ class WorkflowExecutor {
     }
 
     /**
-     * Builds a List<NodeParameterMeta> from the node's saved parameters and variant selection.
-     * Scrapes the stored data.parameters (flat { name: value } map) and uses nodeMetaList
-     * to supplement with dataType. Includes the variant source as a parameter entry.
+     * Builds a List<NodeParameterMeta> from the node's DOM inputs directly.
+     * Scrapes input/select values from the node's rendered form rather than
+     * relying on nodeData.parameters (which Drawflow may not sync).
      */
-    _buildParameters(nodeData) {
+    _buildParameters(nodeData, nodeId) {
         const params = [];
         const nodeKey = nodeData.nodeKey;
         const meta = nodeKey ? this.nodeMetaList.find(m => m.nodeKey === nodeKey) : null;
 
+        // Read the variant value directly from DOM
+        const nodeEl = document.getElementById(`node-${nodeId}`);
+        let selectedVariant = nodeData.selectedVariant;
+        if (nodeEl) {
+            const variantSelect = nodeEl.querySelector('.node-variant-select');
+            if (variantSelect) {
+                selectedVariant = variantSelect.value;
+            }
+        }
+
         // Include variant source as a parameter if applicable
-        if (meta && meta.variantSource && nodeData.selectedVariant) {
+        if (meta && meta.variantSource && selectedVariant) {
             params.push({
                 name: meta.variantSource,
-                value: nodeData.selectedVariant,
+                value: selectedVariant,
                 dataType: 'System.String',
                 source: 'USER_INPUT'
             });
         }
 
-        // Convert saved parameters { name: value } into NodeParameterMeta list
-        if (nodeData.parameters) {
-            // Find the active variant's parameter metadata for dataType lookup
-            let variantMeta = null;
-            if (meta && meta.variants) {
-                variantMeta = meta.variants.find(v => v.value === nodeData.selectedVariant);
-                if (!variantMeta) variantMeta = meta.variants[0]; // fallback to first
-            }
+        // Find the active variant's parameter metadata for dataType lookup
+        let variantMeta = null;
+        if (meta && meta.variants) {
+            variantMeta = meta.variants.find(v => v.value === selectedVariant);
+            if (!variantMeta) variantMeta = meta.variants[0]; // fallback to first
+        }
 
-            Object.keys(nodeData.parameters).forEach(paramName => {
-                // Skip if this is the variant source (already added above)
-                if (meta && meta.variantSource && paramName === meta.variantSource) return;
+        // Scrape parameter values directly from the DOM
+        if (nodeEl) {
+            const paramsContainer = nodeEl.querySelector('.node-params-container');
+            if (paramsContainer) {
+                const inputs = paramsContainer.querySelectorAll('input, select');
+                inputs.forEach(input => {
+                    if (!input.name) return;
+                    const paramName = input.name;
 
-                const paramValue = nodeData.parameters[paramName];
+                    // Skip if this is the variant source (already added above)
+                    if (meta && meta.variantSource && paramName === meta.variantSource) return;
 
-                // Look up dataType from variant metadata, default to System.String
-                let dataType = 'System.String';
-                let source = 'USER_INPUT';
-                if (variantMeta && variantMeta.parameters) {
-                    const paramMeta = variantMeta.parameters.find(p => p.name === paramName);
-                    if (paramMeta) {
-                        dataType = paramMeta.dataType || 'System.String';
-                        source = paramMeta.source || 'USER_INPUT';
+                    const paramValue = input.value;
+
+                    // Look up dataType from variant metadata, default to System.String
+                    let dataType = 'System.String';
+                    let source = 'USER_INPUT';
+                    if (variantMeta && variantMeta.parameters) {
+                        const paramMeta = variantMeta.parameters.find(p => p.name === paramName);
+                        if (paramMeta) {
+                            dataType = paramMeta.dataType || 'System.String';
+                            source = paramMeta.source || 'USER_INPUT';
+                        }
                     }
-                }
 
-                params.push({
-                    name: paramName,
-                    value: paramValue,
-                    dataType: dataType,
-                    source: source
+                    params.push({
+                        name: paramName,
+                        value: paramValue,
+                        dataType: dataType,
+                        source: source
+                    });
                 });
-            });
+            }
         }
 
         return params;
@@ -151,16 +177,16 @@ class WorkflowExecutor {
                     // Resolve the output name from the connection
                     // conn.output is the Drawflow output key (e.g., "output_1")
                     // Map to the actual output name from the node's meta
-                    let sourceOutputName = conn.output;
+                    let sourceOutputName = conn.output || 'output_1';
 
                     if (sourceNode && sourceNode.data && sourceNode.data.nodeKey) {
                         const sourceMeta = this.nodeMetaList.find(m => m.nodeKey === sourceNode.data.nodeKey);
                         if (sourceMeta) {
                             const sourceVariant = sourceMeta.variants?.find(v => v.value === sourceNode.data.selectedVariant)
                                 || sourceMeta.variants?.[0];
-                            if (sourceVariant && sourceVariant.outputs) {
+                            if (sourceVariant && sourceVariant.outputs && sourceOutputName) {
                                 // Map output_1 -> index 0, output_2 -> index 1, etc.
-                                const outputIndex = parseInt(conn.output.replace('output_', '')) - 1;
+                                const outputIndex = parseInt(sourceOutputName.replace('output_', '')) - 1;
                                 if (sourceVariant.outputs[outputIndex]) {
                                     sourceOutputName = sourceVariant.outputs[outputIndex].name;
                                 }

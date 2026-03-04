@@ -261,6 +261,8 @@ function attachNodeEventListeners(nodeId, data, meta) {
         });
     }
 
+
+
     // Prevent click propagation on inputs/selects so Drawflow doesn't interfere
     nodeEl.querySelectorAll('input, select, button').forEach(el => {
         el.addEventListener('mousedown', (e) => e.stopPropagation());

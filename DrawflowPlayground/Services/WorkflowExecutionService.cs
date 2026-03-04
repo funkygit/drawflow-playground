@@ -86,25 +86,24 @@ namespace DrawflowPlayground.Services
         public void QueueNode(ExecutionQueueItem item)
         {
             if (!_activeExecutions.ContainsKey(item.ExecutionId)) return;
-            if (_masterConfigs == null) LoadMasterConfigs();
 
-            // Fetch config from master config by NodeKey
-            NodeConfiguration config = null;
-            var master = _masterConfigs?.FirstOrDefault(m => m.NodeKey == item.NodeKey);
-            if (master != null)
-            {
-                // Clone master config to avoid mutations
-                config = JsonSerializer.Deserialize<NodeConfiguration>(JsonSerializer.Serialize(master));
-
-                // Apply user parameters from the queue item
-                ApplyUserParameters(config, item.Parameters);
-            }
-
-            item.Configuration = config;
             item.QueuedAt = DateTime.UtcNow;
             item.Processed = false;
             _db.ExecutionQueue.Insert(item);
             _logger.LogInformation($"Queued Node {item.NodeId} ({item.NodeType}) for Execution {item.ExecutionId}");
+        }
+
+        private NodeConfiguration ResolveConfiguration(ExecutionQueueItem item)
+        {
+            if (_masterConfigs == null) LoadMasterConfigs();
+
+            var master = _masterConfigs?.FirstOrDefault(m => m.NodeKey == item.NodeKey);
+            if (master == null) return null;
+
+            // Clone to avoid mutations
+            var config = JsonSerializer.Deserialize<NodeConfiguration>(JsonSerializer.Serialize(master));
+            ApplyUserParameters(config, item.Parameters);
+            return config;
         }
 
         private void ApplyUserParameters(NodeConfiguration config, List<NodeParameterMeta> parameters)
@@ -285,8 +284,11 @@ namespace DrawflowPlayground.Services
             _logger.LogInformation($"Processing Node {item.NodeId} ({item.NodeType})...");
             await _hubContext.Clients.Group(executionId.ToString()).SendAsync("NodeStatusChanged", executionId, item.NodeId, "Running", (string)null);
 
+            // Resolve configuration from master configs
+            var config = ResolveConfiguration(item);
+
             // BuiltIn nodes are handled inline — no DLL loading
-            if (item.Configuration?.ExecutionMode == "BuiltIn")
+            if (config?.ExecutionMode == "BuiltIn")
             {
                 await ProcessBuiltInNode(item, executionId);
                 return;
@@ -297,9 +299,8 @@ namespace DrawflowPlayground.Services
 
             try
             {
-                if (item.Configuration != null)
+                if (config != null)
                 {
-                    var config = item.Configuration;
                     var inputs = new Dictionary<string, object>(); 
 
                     // 0. Resolve Variant first (needed for all subsequent steps)
