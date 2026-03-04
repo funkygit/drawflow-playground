@@ -40,9 +40,6 @@ namespace DrawflowPlayground.Models
         public string NodeKey { get; set; }
         public string NodeType { get; set; }
 
-        [System.Text.Json.Serialization.JsonIgnore]
-        [BsonIgnore]
-        public NodeConfiguration Configuration { get; set; } // This will be fetched from config based on the node_key
         public List<NodeParameterMeta> Parameters { get; set; } // This will be passed by UI
         public NodeInput Input { get; set; }
         public DateTime QueuedAt { get; set; }
