@@ -105,6 +105,7 @@ class Program
         var typeName = selectedVariant?.TypeName;
         var constructorDef = selectedVariant?.Constructor;
         var executionFlow = selectedVariant?.ExecutionFlow ?? selectedConfig.ExecutionFlow;
+        var configOutputs = selectedVariant?.Outputs ?? selectedConfig.Outputs;
 
         if (string.IsNullOrEmpty(typeName))
         {
@@ -232,6 +233,7 @@ class Program
             if (executionFlow != null && executionFlow.Count > 0)
             {
                 object? lastResult = null;
+                var methodResults = new Dictionary<string, object?>();
                 foreach (var method in executionFlow.OrderBy(m => m.Sequence))
                 {
                     Console.ForegroundColor = ConsoleColor.DarkGray;
@@ -239,6 +241,7 @@ class Program
                     Console.ResetColor();
 
                     lastResult = await executor.ExecuteMethodAsync(instance, method, inputs);
+                    methodResults[method.MethodName] = lastResult;
 
                     Console.ForegroundColor = ConsoleColor.Green;
                     Console.Write($"  ✓ {method.MethodName}() returned: ");
@@ -254,7 +257,6 @@ class Program
                     Console.WriteLine();
                 }
 
-                // Summary
                 WriteHeader("Result Summary");
                 Console.ForegroundColor = ConsoleColor.Cyan;
                 Console.WriteLine($"  Final result : {FormatResult(lastResult)}");
@@ -264,6 +266,56 @@ class Program
                 Console.ForegroundColor = ConsoleColor.Yellow;
                 Console.WriteLine(FormatResultIndented(lastResult));
                 Console.ResetColor();
+
+                // Map to config-defined outputs (same as server-side logic)
+                if (configOutputs != null && configOutputs.Count > 0)
+                {
+                    WriteHeader("Output Mapping (as stored in DB)");
+                    var outputMap = new Dictionary<string, object>();
+                    foreach (var outputDef in configOutputs)
+                    {
+                        // Resolve source: use ProducedBy if specified, else lastResult
+                        object? sourceResult = lastResult;
+                        if (!string.IsNullOrEmpty(outputDef.ProducedBy) && methodResults.TryGetValue(outputDef.ProducedBy, out var methodResult))
+                        {
+                            sourceResult = methodResult;
+                        }
+
+                        var producedByLabel = !string.IsNullOrEmpty(outputDef.ProducedBy) ? $" ← {outputDef.ProducedBy}()" : "";
+
+                        if (sourceResult != null)
+                        {
+                            try
+                            {
+                                var targetType = Type.GetType(outputDef.DataType) ?? typeof(object);
+                                var convertedValue = Convert.ChangeType(sourceResult, targetType);
+                                outputMap[outputDef.Name] = convertedValue;
+                                Console.ForegroundColor = ConsoleColor.DarkGray;
+                                Console.Write($"    {outputDef.Name}");
+                                Console.ForegroundColor = ConsoleColor.White;
+                                Console.Write($" ({outputDef.DataType}) = ");
+                                Console.ForegroundColor = ConsoleColor.Yellow;
+                                Console.Write(convertedValue);
+                                Console.ForegroundColor = ConsoleColor.DarkCyan;
+                                Console.WriteLine(producedByLabel);
+                                Console.ResetColor();
+                            }
+                            catch (Exception ex)
+                            {
+                                outputMap[outputDef.Name] = sourceResult.ToString();
+                                Console.ForegroundColor = ConsoleColor.DarkYellow;
+                                Console.WriteLine($"    {outputDef.Name} = {sourceResult} (conversion to {outputDef.DataType} failed: {ex.Message})");
+                                Console.ResetColor();
+                            }
+                        }
+                    }
+                    Console.WriteLine();
+                    Console.ForegroundColor = ConsoleColor.White;
+                    Console.WriteLine($"  DB Output JSON:");
+                    Console.ForegroundColor = ConsoleColor.Cyan;
+                    Console.WriteLine($"  {JsonSerializer.Serialize(outputMap)}");
+                    Console.ResetColor();
+                }
             }
             else
             {

@@ -44,9 +44,16 @@
                 ],
                 "Outputs": [
                     {
-                        "Name": "Result",
+                        "Name": "Sum",
                         "DataType": "System.Int32",
-                        "Description": "The result of the last operation"
+                        "Description": "The result of the Add operation",
+                        "ProducedBy": "Add"
+                    },
+                    {
+                        "Name": "Product",
+                        "DataType": "System.Int32",
+                        "Description": "The result of the Multiply operation",
+                        "ProducedBy": "Multiply"
                     }
                 ]
             }

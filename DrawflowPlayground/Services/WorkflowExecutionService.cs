@@ -456,11 +456,47 @@ namespace DrawflowPlayground.Services
                         var instance = _dynamicExecutor.CreateInstance(config.DllPath, resolvedTypeName, resolvedConstructor, inputs);
                         
                         object lastResult = null;
+                        var methodResults = new Dictionary<string, object>();
                         foreach (var method in resolvedExecutionFlow.OrderBy(m => m.Sequence))
                         {
                             lastResult = await _dynamicExecutor.ExecuteMethodAsync(instance, method, inputs);
+                            methodResults[method.MethodName] = lastResult;
                         }
-                        output = lastResult?.ToString() ?? "Completed";
+
+                        // Map results to config-defined output names and serialize as JSON
+                        if (resolvedOutputs != null && resolvedOutputs.Count > 0)
+                        {
+                            var outputMap = new Dictionary<string, object>();
+                            foreach (var outputDef in resolvedOutputs)
+                            {
+                                // Resolve the source result: use ProducedBy if specified, else lastResult
+                                object sourceResult = lastResult;
+                                if (!string.IsNullOrEmpty(outputDef.ProducedBy) && methodResults.TryGetValue(outputDef.ProducedBy, out var methodResult))
+                                {
+                                    sourceResult = methodResult;
+                                }
+
+                                if (sourceResult != null)
+                                {
+                                    try
+                                    {
+                                        var targetType = Type.GetType(outputDef.DataType) ?? typeof(object);
+                                        var convertedValue = Convert.ChangeType(sourceResult, targetType);
+                                        outputMap[outputDef.Name] = convertedValue;
+                                    }
+                                    catch
+                                    {
+                                        outputMap[outputDef.Name] = sourceResult.ToString();
+                                    }
+                                }
+                            }
+                            output = JsonSerializer.Serialize(outputMap);
+                            _logger.LogInformation($"Node {item.NodeId} output mapped: {output}");
+                        }
+                        else
+                        {
+                            output = lastResult?.ToString() ?? "Completed";
+                        }
                         
                         if (instance is IDisposable d) d.Dispose();
                     }
