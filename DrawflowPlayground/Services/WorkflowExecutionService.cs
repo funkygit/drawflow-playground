@@ -478,6 +478,23 @@ namespace DrawflowPlayground.Services
 
                                 if (sourceResult != null)
                                 {
+                                    // Resolve PropertyPath (e.g. "Item1" for tuples)
+                                    if (!string.IsNullOrEmpty(outputDef.PropertyPath))
+                                    {
+                                        var prop = sourceResult.GetType().GetProperty(outputDef.PropertyPath);
+                                        if (prop != null)
+                                        {
+                                            sourceResult = prop.GetValue(sourceResult);
+                                        }
+                                        else
+                                        {
+                                            // Try field (ValueTuple uses fields, not properties)
+                                            var field = sourceResult.GetType().GetField(outputDef.PropertyPath);
+                                            if (field != null)
+                                                sourceResult = field.GetValue(sourceResult);
+                                        }
+                                    }
+
                                     try
                                     {
                                         var targetType = Type.GetType(outputDef.DataType) ?? typeof(object);
@@ -486,7 +503,7 @@ namespace DrawflowPlayground.Services
                                     }
                                     catch
                                     {
-                                        outputMap[outputDef.Name] = sourceResult.ToString();
+                                        outputMap[outputDef.Name] = sourceResult?.ToString();
                                     }
                                 }
                             }

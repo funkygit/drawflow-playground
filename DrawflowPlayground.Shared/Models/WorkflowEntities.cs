@@ -147,6 +147,7 @@ namespace DrawflowPlayground.Models
         public string Description { get; set; }
         public string ProducedOn { get; set; } // "Success", "Failure", "Event:MessageReceived"
         public string ProducedBy { get; set; } // MethodName that produces this output (null = last method)
+        public string PropertyPath { get; set; } // Property to extract from result (e.g. "Item1" for tuples)
     }
 
     public class ExecutionResult
