@@ -245,13 +245,24 @@ class Program
                     Console.ForegroundColor = ConsoleColor.Yellow;
                     Console.WriteLine(FormatResult(lastResult));
                     Console.ResetColor();
+
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine($"    Type       : {lastResult?.GetType().FullName ?? "(null)"}");
+                    Console.ForegroundColor = ConsoleColor.Gray;
+                    Console.WriteLine($"    Serialized : {FormatResultIndented(lastResult)}");
+                    Console.ResetColor();
                     Console.WriteLine();
                 }
 
                 // Summary
                 WriteHeader("Result Summary");
                 Console.ForegroundColor = ConsoleColor.Cyan;
-                Console.WriteLine($"  Final result: {FormatResult(lastResult)}");
+                Console.WriteLine($"  Final result : {FormatResult(lastResult)}");
+                Console.WriteLine($"  Result type  : {lastResult?.GetType().FullName ?? "(null)"}");
+                Console.ForegroundColor = ConsoleColor.White;
+                Console.WriteLine($"  Serialized   :");
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine(FormatResultIndented(lastResult));
                 Console.ResetColor();
             }
             else
@@ -368,6 +379,19 @@ class Program
         try
         {
             return JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = false });
+        }
+        catch
+        {
+            return result.ToString() ?? "(null)";
+        }
+    }
+
+    static string FormatResultIndented(object? result)
+    {
+        if (result == null) return "(null)";
+        try
+        {
+            return JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
         }
         catch
         {
