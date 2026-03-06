@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Threading.Tasks;
@@ -10,11 +11,21 @@ using Microsoft.Extensions.Logging;
 
 namespace DrawflowPlayground.Utilities
 {
+    /// <summary>
+    /// Return type for method execution that may capture event data.
+    /// </summary>
+    public class MethodExecutionResult
+    {
+        public object ReturnValue { get; set; }
+        public Dictionary<string, object> CapturedEvents { get; set; } = new();
+    }
+
     public interface IDynamicExecutor
     {
         object CreateInstance(string dllPath, string typeName, MethodDefinition constructorDef = null, Dictionary<string, object> inputs = null);
         Task<object> ExecuteMethodAsync(object instance, MethodDefinition methodDef, Dictionary<string, object> inputs);
-        Task<object> ExecuteAsync(NodeConfiguration config, string typeName, MethodDefinition constructorDef, Dictionary<string, object> inputs); // Legacy/Simple wrapper
+        Task<MethodExecutionResult> ExecuteMethodWithEventsAsync(object instance, MethodDefinition methodDef, Dictionary<string, object> inputs, int timeoutSeconds = 30);
+        Task<object> ExecuteAsync(NodeConfiguration config, string typeName, MethodDefinition constructorDef, Dictionary<string, object> inputs);
         string ResolvePlaceholders(string template, Dictionary<string, object> inputs);
     }
 
@@ -204,6 +215,116 @@ namespace DrawflowPlayground.Utilities
             return null;
         }
 
+        public async Task<MethodExecutionResult> ExecuteMethodWithEventsAsync(
+            object instance, MethodDefinition methodDef, Dictionary<string, object> inputs, int timeoutSeconds = 30)
+        {
+            if (instance == null) throw new ArgumentNullException(nameof(instance));
+            if (methodDef == null) throw new ArgumentNullException(nameof(methodDef));
+
+            var execResult = new MethodExecutionResult();
+            var subscriptions = new List<EventSubscription>();
+
+            try
+            {
+                var instanceType = instance.GetType();
+
+                foreach (var eventName in methodDef.Emits ?? Enumerable.Empty<string>())
+                {
+                    var eventInfo = instanceType.GetEvent(eventName);
+                    if (eventInfo == null)
+                    {
+                        _logger.LogWarning("Event '{EventName}' not found on type {Type}", eventName, instanceType.FullName);
+                        continue;
+                    }
+
+                    var tcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var handler = CreateEventHandler(eventInfo, tcs);
+                    eventInfo.AddEventHandler(instance, handler);
+
+                    subscriptions.Add(new EventSubscription
+                    {
+                        EventName = eventName,
+                        EventInfo = eventInfo,
+                        Handler = handler,
+                        Tcs = tcs
+                    });
+
+                    _logger.LogInformation("Subscribed to event '{EventName}' on {Type}", eventName, instanceType.Name);
+                }
+
+                execResult.ReturnValue = await ExecuteMethodAsync(instance, methodDef, inputs);
+
+                foreach (var sub in subscriptions)
+                {
+                    var completed = await Task.WhenAny(sub.Tcs.Task, Task.Delay(TimeSpan.FromSeconds(timeoutSeconds)));
+                    if (completed == sub.Tcs.Task)
+                    {
+                        execResult.CapturedEvents[$"Event:{sub.EventName}"] = sub.Tcs.Task.Result;
+                        _logger.LogInformation("Captured event '{EventName}'", sub.EventName);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Timeout waiting for event '{EventName}' after {Timeout}s", sub.EventName, timeoutSeconds);
+                    }
+                }
+            }
+            finally
+            {
+                foreach (var sub in subscriptions)
+                {
+                    try
+                    {
+                        sub.EventInfo.RemoveEventHandler(instance, sub.Handler);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to unsubscribe from event '{EventName}'", sub.EventName);
+                    }
+                }
+            }
+
+            return execResult;
+        }
+
+        private Delegate CreateEventHandler(EventInfo eventInfo, TaskCompletionSource<object> tcs)
+        {
+            var handlerType = eventInfo.EventHandlerType!;
+            var invokeMethod = handlerType.GetMethod("Invoke")!;
+            var parameters = invokeMethod.GetParameters();
+
+            if (parameters.Length == 2 && parameters[0].ParameterType == typeof(object))
+            {
+                var eventArgsType = parameters[1].ParameterType;
+                var senderParam = Expression.Parameter(typeof(object), "sender");
+                var argsParam = Expression.Parameter(eventArgsType, "e");
+                var tcsConst = Expression.Constant(tcs);
+                var trySetResult = typeof(TaskCompletionSource<object>).GetMethod("TrySetResult")!;
+                var castArgs = Expression.Convert(argsParam, typeof(object));
+                var callExpr = Expression.Call(tcsConst, trySetResult, castArgs);
+                var lambda = Expression.Lambda(handlerType, callExpr, senderParam, argsParam);
+                return lambda.Compile();
+            }
+            else if (parameters.Length == 0)
+            {
+                var tcsConst = Expression.Constant(tcs);
+                var trySetResult = typeof(TaskCompletionSource<object>).GetMethod("TrySetResult")!;
+                var callExpr = Expression.Call(tcsConst, trySetResult, Expression.Constant(null, typeof(object)));
+                var lambda = Expression.Lambda(handlerType, callExpr);
+                return lambda.Compile();
+            }
+            else
+            {
+                var paramExprs = parameters.Select(p => Expression.Parameter(p.ParameterType, p.Name)).ToArray();
+                var arrayInit = Expression.NewArrayInit(typeof(object),
+                    paramExprs.Select(p => Expression.Convert(p, typeof(object))).ToArray());
+                var tcsConst = Expression.Constant(tcs);
+                var trySetResult = typeof(TaskCompletionSource<object>).GetMethod("TrySetResult")!;
+                var callExpr = Expression.Call(tcsConst, trySetResult, arrayInit);
+                var lambda = Expression.Lambda(handlerType, callExpr, paramExprs);
+                return lambda.Compile();
+            }
+        }
+
         public string ResolvePlaceholders(string template, Dictionary<string, object> inputs)
         {
             if (string.IsNullOrEmpty(template) || inputs == null) return template;
@@ -227,6 +348,14 @@ namespace DrawflowPlayground.Utilities
                 return Activator.CreateInstance(type);
             }
             return null;
+        }
+
+        private class EventSubscription
+        {
+            public string EventName { get; set; }
+            public EventInfo EventInfo { get; set; }
+            public Delegate Handler { get; set; }
+            public TaskCompletionSource<object> Tcs { get; set; }
         }
     }
 }

@@ -459,8 +459,24 @@ namespace DrawflowPlayground.Services
                         var methodResults = new Dictionary<string, object>();
                         foreach (var method in resolvedExecutionFlow.OrderBy(m => m.Sequence))
                         {
-                            lastResult = await _dynamicExecutor.ExecuteMethodAsync(instance, method, inputs);
-                            methodResults[method.MethodName] = lastResult;
+                            if (method.Emits != null && method.Emits.Count > 0)
+                            {
+                                // Method emits events — use event-aware execution
+                                var execResult = await _dynamicExecutor.ExecuteMethodWithEventsAsync(instance, method, inputs);
+                                lastResult = execResult.ReturnValue;
+                                methodResults[method.MethodName] = lastResult;
+
+                                // Merge captured events into methodResults
+                                foreach (var kvp in execResult.CapturedEvents)
+                                {
+                                    methodResults[kvp.Key] = kvp.Value;
+                                }
+                            }
+                            else
+                            {
+                                lastResult = await _dynamicExecutor.ExecuteMethodAsync(instance, method, inputs);
+                                methodResults[method.MethodName] = lastResult;
+                            }
                         }
 
                         // Map results to config-defined output names and serialize as JSON
@@ -469,9 +485,23 @@ namespace DrawflowPlayground.Services
                             var outputMap = new Dictionary<string, object>();
                             foreach (var outputDef in resolvedOutputs)
                             {
-                                // Resolve the source result: use ProducedBy if specified, else lastResult
+                                // Resolve the source result based on ProducedOn / ProducedBy
                                 object sourceResult = lastResult;
-                                if (!string.IsNullOrEmpty(outputDef.ProducedBy) && methodResults.TryGetValue(outputDef.ProducedBy, out var methodResult))
+
+                                if (!string.IsNullOrEmpty(outputDef.ProducedOn) && outputDef.ProducedOn.StartsWith("Event:"))
+                                {
+                                    // Event-sourced output: look up from captured events
+                                    if (methodResults.TryGetValue(outputDef.ProducedOn, out var eventResult))
+                                    {
+                                        sourceResult = eventResult;
+                                    }
+                                    else
+                                    {
+                                        _logger.LogWarning($"Event '{outputDef.ProducedOn}' not captured for output '{outputDef.Name}'");
+                                        continue;
+                                    }
+                                }
+                                else if (!string.IsNullOrEmpty(outputDef.ProducedBy) && methodResults.TryGetValue(outputDef.ProducedBy, out var methodResult))
                                 {
                                     sourceResult = methodResult;
                                 }
