@@ -8,7 +8,7 @@ namespace DrawflowPlayground.Utilities
 {
     public class ParameterParser
     {
-        public bool ValidateAndExtract(List<NodeParameter> configParams, Dictionary<string, object> uiInputs, out object[] methodArgs, out string error)
+        public bool ValidateAndExtract(List<NodeParameter> configParams, Dictionary<string, object> uiInputs, System.Reflection.Assembly targetAssembly, out object[] methodArgs, out string error)
         {
             methodArgs = null;
             error = null;
@@ -55,7 +55,11 @@ namespace DrawflowPlayground.Utilities
                     }
                 }
 
-                // 3. Convert Type
+                // 3. Resolve Target Type using passed Assembly
+                Type targetType = ResolveTypeFromAssembly(param.DataType, targetAssembly);
+                if (targetType == null) targetType = param.ParameterType; // fallback
+
+                // 4. Convert Type
                 if (val != null)
                 {
                     try
@@ -63,28 +67,82 @@ namespace DrawflowPlayground.Utilities
                         // Handle JSON Element if coming from deserialized JSON
                         if (val is JsonElement je)
                         {
-                            if (je.ValueKind == JsonValueKind.String) val = je.GetString();
+                            if (je.ValueKind == JsonValueKind.String)
+                            {
+                                // We check if target type is practically a custom object (not simple strings/dates)
+                                // If it is, then the string might actually be a JSON string we need to deserialize
+                                if (targetType != typeof(string) && !targetType.IsPrimitive && targetType != typeof(DateTime) && targetType != typeof(Guid))
+                                {
+                                    try 
+                                    {
+                                         args[i] = JsonSerializer.Deserialize(je.GetString(), targetType, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                                         continue;
+                                    }
+                                    catch 
+                                    {
+                                        // Fallback to simple string extraction if it fails to parse as JSON
+                                        val = je.GetString();
+                                    }
+                                }
+                                else
+                                {
+                                    val = je.GetString();
+                                }
+                            }
                             else if (je.ValueKind == JsonValueKind.Number) val = je.GetInt32(); // Simplification
                             else if (je.ValueKind == JsonValueKind.True || je.ValueKind == JsonValueKind.False) val = je.GetBoolean();
+                            else if (je.ValueKind == JsonValueKind.Object || je.ValueKind == JsonValueKind.Array)
+                            {
+                                // Deserialize complex JsonElement structure directly into targetType
+                                args[i] = je.Deserialize(targetType, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                                continue;
+                            }
+                        }
+                        else if (val is string str && targetType != typeof(string) && !targetType.IsPrimitive && targetType != typeof(DateTime) && targetType != typeof(Guid))
+                        {
+                             // Raw string that might be a JSON payload for a complex object
+                             try 
+                             {
+                                  if (str.TrimStart().StartsWith("{") || str.TrimStart().StartsWith("["))
+                                  {
+                                      args[i] = JsonSerializer.Deserialize(str, targetType, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                                      continue;
+                                  }
+                             }
+                             catch 
+                             {
+                                  // Ignore, fall through to Convert.ChangeType
+                             }
                         }
 
-                        args[i] = Convert.ChangeType(val, param.ParameterType);
+                        args[i] = Convert.ChangeType(val, targetType);
                     }
                     catch (Exception ex)
                     {
-                        error = $"Invalid type for parameter {param.Name}. Expected {param.DataType}. Error: {ex.Message}";
+                        error = $"Invalid type for parameter {param.Name}. Expected {param.DataType} (Resolved: {targetType.Name}). Error: {ex.Message}";
                         return false;
                     }
                 }
                 else
                 {
                      // Null allowed if not required
-                     args[i] = GetDefault(param.ParameterType);
+                     args[i] = GetDefault(targetType);
                 }
             }
 
             methodArgs = args;
             return true;
+        }
+
+        private Type ResolveTypeFromAssembly(string typeName, System.Reflection.Assembly targetAssembly)
+        {
+            if (string.IsNullOrEmpty(typeName)) return null;
+            if (targetAssembly != null)
+            {
+                var type = targetAssembly.GetType(typeName);
+                if (type != null) return type;
+            }
+            return Type.GetType(typeName);
         }
 
         private bool ParseRequirement(object isRequiredObj, Dictionary<string, object> uiInputs)

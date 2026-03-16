@@ -5,6 +5,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.Loader;
+using System.Threading;
 using System.Threading.Tasks;
 using DrawflowPlayground.Models;
 using Microsoft.Extensions.Logging;
@@ -23,9 +24,9 @@ namespace DrawflowPlayground.Utilities
     public interface IDynamicExecutor
     {
         object CreateInstance(string dllPath, string typeName, MethodDefinition constructorDef = null, Dictionary<string, object> inputs = null);
-        Task<object> ExecuteMethodAsync(object instance, MethodDefinition methodDef, Dictionary<string, object> inputs);
-        Task<MethodExecutionResult> ExecuteMethodWithEventsAsync(object instance, MethodDefinition methodDef, Dictionary<string, object> inputs, int timeoutSeconds = 30);
-        Task<object> ExecuteAsync(NodeConfiguration config, string typeName, MethodDefinition constructorDef, Dictionary<string, object> inputs);
+        Task<object> ExecuteMethodAsync(object instance, MethodDefinition methodDef, Dictionary<string, object> inputs, CancellationToken cancellationToken = default);
+        Task<MethodExecutionResult> ExecuteMethodWithEventsAsync(object instance, MethodDefinition methodDef, Dictionary<string, object> inputs, int timeoutSeconds = 30, CancellationToken cancellationToken = default);
+        Task<object> ExecuteAsync(NodeConfiguration config, string typeName, MethodDefinition constructorDef, Dictionary<string, object> inputs, CancellationToken cancellationToken = default);
         string ResolvePlaceholders(string template, Dictionary<string, object> inputs);
     }
 
@@ -149,7 +150,7 @@ namespace DrawflowPlayground.Utilities
 
             if (constructorDef != null && inputs != null)
             {
-                if (!_parser.ValidateAndExtract(constructorDef.Parameters, inputs, out var args, out var error))
+                if (!_parser.ValidateAndExtract(constructorDef.Parameters, inputs, assembly, out var args, out var error))
                 {
                     throw new ArgumentException($"Constructor parameter validation failed: {error}");
                 }
@@ -159,7 +160,7 @@ namespace DrawflowPlayground.Utilities
             return Activator.CreateInstance(type);
         }
 
-        public async Task<object> ExecuteMethodAsync(object instance, MethodDefinition methodDef, Dictionary<string, object> inputs)
+        public async Task<object> ExecuteMethodAsync(object instance, MethodDefinition methodDef, Dictionary<string, object> inputs, CancellationToken cancellationToken = default)
         {
             if (instance == null) throw new ArgumentNullException(nameof(instance));
             if (methodDef == null) throw new ArgumentNullException(nameof(methodDef));
@@ -174,13 +175,38 @@ namespace DrawflowPlayground.Utilities
             }
 
             // Parse Parameters using Utility
-            if (!_parser.ValidateAndExtract(methodDef.Parameters, inputs, out var args, out var error))
+            if (!_parser.ValidateAndExtract(methodDef.Parameters, inputs, type.Assembly, out var args, out var error))
             {
                 throw new ArgumentException($"Parameter validation failed: {error}");
             }
 
+            // Inject CancellationToken if required by the method signature
+            var actualParams = method.GetParameters();
+            var finalArgs = new object[actualParams.Length];
+            int argIndex = 0;
+            for (int i = 0; i < actualParams.Length; i++)
+            {
+                if (actualParams[i].ParameterType == typeof(CancellationToken))
+                {
+                    finalArgs[i] = cancellationToken;
+                }
+                else
+                {
+                    // Map from parsed args if available
+                    if (args != null && argIndex < args.Length)
+                    {
+                        finalArgs[i] = args[argIndex];
+                        argIndex++;
+                    }
+                    else if (actualParams[i].HasDefaultValue)
+                    {
+                        finalArgs[i] = actualParams[i].DefaultValue;
+                    }
+                }
+            }
+
             // Invoke
-            var result = method.Invoke(instance, args);
+            var result = method.Invoke(instance, finalArgs);
 
             if (result is Task task)
             {
@@ -197,7 +223,7 @@ namespace DrawflowPlayground.Utilities
             return result;
         }
 
-        public async Task<object> ExecuteAsync(NodeConfiguration config, string typeName, MethodDefinition constructorDef, Dictionary<string, object> inputs)
+        public async Task<object> ExecuteAsync(NodeConfiguration config, string typeName, MethodDefinition constructorDef, Dictionary<string, object> inputs, CancellationToken cancellationToken = default)
         {
             // Wrapper for simple execution (Transient/Legacy)
             // If ExecutionFlow is present, run sequence
@@ -207,7 +233,7 @@ namespace DrawflowPlayground.Utilities
                 object lastResult = null;
                 foreach (var method in config.ExecutionFlow.OrderBy(m => m.Sequence))
                 {
-                    lastResult = await ExecuteMethodAsync(instance, method, inputs);
+                    lastResult = await ExecuteMethodAsync(instance, method, inputs, cancellationToken);
                 }
                 if (instance is IDisposable d) d.Dispose();
                 return lastResult;
@@ -216,7 +242,7 @@ namespace DrawflowPlayground.Utilities
         }
 
         public async Task<MethodExecutionResult> ExecuteMethodWithEventsAsync(
-            object instance, MethodDefinition methodDef, Dictionary<string, object> inputs, int timeoutSeconds = 30)
+            object instance, MethodDefinition methodDef, Dictionary<string, object> inputs, int timeoutSeconds = 30, CancellationToken cancellationToken = default)
         {
             if (instance == null) throw new ArgumentNullException(nameof(instance));
             if (methodDef == null) throw new ArgumentNullException(nameof(methodDef));
@@ -252,7 +278,7 @@ namespace DrawflowPlayground.Utilities
                     _logger.LogInformation("Subscribed to event '{EventName}' on {Type}", eventName, instanceType.Name);
                 }
 
-                execResult.ReturnValue = await ExecuteMethodAsync(instance, methodDef, inputs);
+                execResult.ReturnValue = await ExecuteMethodAsync(instance, methodDef, inputs, cancellationToken);
 
                 foreach (var sub in subscriptions)
                 {

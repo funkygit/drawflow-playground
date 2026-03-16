@@ -252,7 +252,7 @@ namespace DrawflowPlayground.Services
                         continue;
                     }
 
-                    await ProcessNode(queueItem, executionId);
+                    await ProcessNode(queueItem, executionId, token);
 
                     queueItem.Processed = true;
                     _db.ExecutionQueue.Update(queueItem);
@@ -279,7 +279,7 @@ namespace DrawflowPlayground.Services
             }
         }
 
-        private async Task ProcessNode(ExecutionQueueItem item, Guid executionId)
+        private async Task ProcessNode(ExecutionQueueItem item, Guid executionId, CancellationToken cancellationToken)
         {
             _logger.LogInformation($"Processing Node {item.NodeId} ({item.NodeType})...");
             await _hubContext.Clients.Group(executionId.ToString()).SendAsync("NodeStatusChanged", executionId, item.NodeId, "Running", (string)null);
@@ -290,7 +290,7 @@ namespace DrawflowPlayground.Services
             // BuiltIn nodes are handled inline — no DLL loading
             if (config?.ExecutionMode == "BuiltIn")
             {
-                await ProcessBuiltInNode(item, executionId);
+                await ProcessBuiltInNode(item, executionId, cancellationToken);
                 return;
             }
             
@@ -437,7 +437,7 @@ namespace DrawflowPlayground.Services
                         // 2. Execute OnStart
                         if (config.Lifecycle.OnStart != null)
                         {
-                            await _dynamicExecutor.ExecuteMethodAsync(instance, config.Lifecycle.OnStart, inputs);
+                            await _dynamicExecutor.ExecuteMethodAsync(instance, config.Lifecycle.OnStart, inputs, cancellationToken);
                         }
                         
                         // 3. Store Instance
@@ -462,7 +462,7 @@ namespace DrawflowPlayground.Services
                             if (method.Emits != null && method.Emits.Count > 0)
                             {
                                 // Method emits events — use event-aware execution
-                                var execResult = await _dynamicExecutor.ExecuteMethodWithEventsAsync(instance, method, inputs);
+                                var execResult = await _dynamicExecutor.ExecuteMethodWithEventsAsync(instance, method, inputs, 30, cancellationToken);
                                 lastResult = execResult.ReturnValue;
                                 methodResults[method.MethodName] = lastResult;
 
@@ -474,7 +474,7 @@ namespace DrawflowPlayground.Services
                             }
                             else
                             {
-                                lastResult = await _dynamicExecutor.ExecuteMethodAsync(instance, method, inputs);
+                                lastResult = await _dynamicExecutor.ExecuteMethodAsync(instance, method, inputs, cancellationToken);
                                 methodResults[method.MethodName] = lastResult;
                             }
                         }
@@ -578,7 +578,7 @@ namespace DrawflowPlayground.Services
 
         // ========== Built-In Node Handlers ==========
 
-        private async Task ProcessBuiltInNode(ExecutionQueueItem item, Guid executionId)
+        private async Task ProcessBuiltInNode(ExecutionQueueItem item, Guid executionId, CancellationToken cancellationToken)
         {
             string output = "Success";
             string triggeredOutput = null; // null = queue all children, specific = route to one output
